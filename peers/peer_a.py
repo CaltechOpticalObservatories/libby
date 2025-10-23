@@ -1,36 +1,26 @@
 import time
-from libby import Libby
+from libby.daemon import LibbyDaemon
 
-PEER_ID = "peer-A"
-BIND = "tcp://*:5555"
-ADDRESS_BOOK = {
-    "peer-B": "tcp://127.0.0.1:5556",
-}
+class PeerA(LibbyDaemon):
+    def config_peer_id(self): return "peer-A"
+    def config_bind(self):    return "tcp://*:5555"
+    def config_address_book(self): return {"peer-B": "tcp://127.0.0.1:5556"}
+    def config_subscriptions(self): return ["alerts.status"]
 
-def main():
-    # Start with discovery enabled (HELLO broadcasts caps/keys/subs)
-    with Libby.zmq(
-        self_id=PEER_ID,
-        bind=BIND,
-        address_book=ADDRESS_BOOK,
-        discover=True,
-        discover_interval_s=2.0,   # faster announcements during dev
-        hello_on_start=True,
-    ) as libby:
+    def on_start(self, libby):
+        # Wait briefly for B to advertise the RPC key; fall back if slow
+        try:
+            if not libby.wait_for_key("peer-B", "perf.echo", timeout_s=3.0):
+                libby.learn_peer_keys("peer-B", ["perf.echo"])
+        except AttributeError:
+            pass
 
-        # Wait (briefly) until we learn PeerB serves 'perf.echo'
-        libby.learn_peer_keys("peer-B", ["perf.echo"])
+        print("[ClientDaemon] sending perf.echo…")
+        res = libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=8000)
+        print("[ClientDaemon] resp:", res)
 
-        print("[PeerA] sending REQ perf.echo to peer-B...")
-        result = libby.request("peer-B", key="perf.echo", payload={"t0": time.time()}, ttl_ms=8000)
-        print("[PeerA] result:", result)
-
-        # Publish a status event
-        sent = libby.publish("alerts.status", {"ok": True})
-        if sent:
-            print(f"[PeerA] published alerts.status to {sent} subscriber(s)")
-        else:
-            print("[PeerA] broadcasted alerts.status")
+        sent = libby.emit("alerts.status", {"ok": True})
+        print(f"[ClientDaemon] status emitted (direct={sent})")
 
 if __name__ == "__main__":
-    main()
+    PeerA().serve()
