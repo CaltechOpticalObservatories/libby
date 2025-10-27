@@ -2,30 +2,41 @@ import time
 from typing import Dict, Any
 from libby.daemon import LibbyDaemon
 
+def handle_echo(p: Dict[str, Any]):
+    # can return any JSON-serializable thing
+    return {"ok": True, "t0": p.get("t0"), "t1": time.time()}
+
+def handle_ping(_p):
+    # returns a string
+    return "pong"
+
+def handle_answer(_p):
+    # returns a number
+    return 42
+
+def on_status(payload: Dict[str, Any]) -> None:
+    print("[PeerB] alerts.status:", payload)
+
 class PeerB(LibbyDaemon):
-    def config_peer_id(self) -> str:
-        return "peer-B"
+    peer_id = "peer-B"
+    bind = "tcp://*:5556"
+    address_book = {
+        "peer-A": "tcp://127.0.0.1:5555",
+        "peer-C": "tcp://127.0.0.1:5557",
+    }
+    discovery_enabled = True
+    discovery_interval_s = 2.0
 
-    def config_bind(self) -> str:
-        return "tcp://*:5556"
+    services = {
+        "perf.echo": handle_echo,
+        "ping.txt":  handle_ping,
+        "answer":    handle_answer,
+    }
 
-    def config_address_book(self) -> Dict[str, str]:
-        return {"peer-A": "tcp://127.0.0.1:5555"}
-
-    def config_rpc_keys(self):
-        return ["perf.echo"]
-
-    def config_subscriptions(self):
-        return ["alerts.status"]
-
-    def on_req(self, key: str, payload: Dict[str, Any], ctx: Dict[str, Any]):
-        if key == "perf.echo":
-            t0 = payload.get("t0")
-            return {"ok": True, "t0": t0, "t1": time.time(), "from": ctx["source"]}
-        return {"ok": False, "error": f"unknown key {key}"}
-
-    def on_event(self, topic: str, msg):
-        print(f"[EchoDaemon] {topic}: {msg.env.payload}")
+    # Topics (PUB/SUB)
+    topics = {
+        "alerts.status": on_status,
+    }
 
 if __name__ == "__main__":
     PeerB().serve()

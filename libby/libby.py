@@ -23,17 +23,16 @@ class Libby:
         self.keys = KeyRegistry()
         self.proto = Protocol(transport=self.transport, self_id=self_id, keys=self.keys)
 
-        # Optional initial RPC registration
+        # bamboo owns the semantics
         if keys:
             for k in keys:
                 self.proto.serve(k, callback if callback else (lambda *_: None))
 
-        # Optional periodic discovery (HELLO with caps/keys/subs)
+        # Periodic discovery (provided by bamboo)
         self._disco: Optional[Discovery] = None
         if discover:
             self._disco = Discovery(self.proto.send, self_id, self.keys, every_seconds=int(discover_interval_s))
             if hello_on_start:
-                # Best-effort initial HELLO
                 try:
                     self._disco.announce_now()
                 except AttributeError:
@@ -57,7 +56,6 @@ class Libby:
         hello_on_start: bool = True,
     ) -> "Libby":
         try:
-            # transport lives in libby (not bamboo)
             from .zmq_transport import ZmqTransport
         except Exception as e:
             raise RuntimeError(
@@ -78,47 +76,37 @@ class Libby:
             hello_on_start=hello_on_start,
         )
 
+    # lifecycle
     def start(self) -> None:
         if hasattr(self.transport, "start"):
-            try:
-                self.transport.start()
-            except Exception:
-                pass
+            try: self.transport.start()
+            except Exception: pass
 
     def stop(self) -> None:
         if getattr(self, "_disco", None):
-            try:
-                self._disco.stop()
-            except Exception:
-                pass
+            try: self._disco.stop()
+            except Exception: pass
         if hasattr(self.transport, "stop"):
-            try:
-                self.transport.stop()
-            except Exception:
-                pass
+            try: self.transport.stop()
+            except Exception: pass
 
-    close = stop  # friendly alias
+    close = stop
 
-    # Context manager
-    def __enter__(self):
-        return self
-    def __exit__(self, exc_type, exc, tb):
-        self.stop()
+    def __enter__(self): return self
+    def __exit__(self, exc_type, exc, tb): self.stop()
 
+    # thin passthroughs to bamboo.Protocol
     def request(self, peer_id: str, key: str, payload: Dict[str, Any], ttl_ms: int = 8000):
         return self.proto.request_peer(peer_id, key, payload, timeout_s=ttl_ms / 1000.0)
 
-    # readable alias for daemons
     def rpc(self, peer_id: str, key: str, payload: Dict[str, Any], ttl_ms: int = 8000):
         return self.request(peer_id, key, payload, ttl_ms)
 
-    # Register/advertise additional RPC keys later
     def serve_keys(self, keys: List[str], callback: Callable[[dict, dict], Optional[dict]]) -> None:
         for k in keys:
             self.proto.serve(k, callback)
 
     def listen(self, topic: str, handler: Callable[[Any], None]) -> None:
-        """Register a PUB event handler (receives bamboo.Message). Auto-subscribe."""
         self.proto.listen(topic, handler)
 
     def listen_many(self, handlers: Dict[str, Callable[[Any], None]]) -> None:
@@ -126,10 +114,8 @@ class Libby:
             self.listen(topic, h)
 
     def publish(self, topic: str, payload: Dict[str, Any]) -> int:
-        """Publish; returns direct recipient count (0 => broadcast fallback)."""
         return self.proto.publish(topic, payload)
 
-    # readable alias
     def emit(self, topic: str, payload: Dict[str, Any]) -> int:
         return self.publish(topic, payload)
 
@@ -174,7 +160,6 @@ class Libby:
 
     def run_forever(self) -> None:
         try:
-            while True:
-                time.sleep(1.0)
+            while True: time.sleep(1.0)
         except KeyboardInterrupt:
             self.stop()

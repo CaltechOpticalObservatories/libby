@@ -2,25 +2,29 @@ import time
 from libby.daemon import LibbyDaemon
 
 class PeerA(LibbyDaemon):
-    def config_peer_id(self): return "peer-A"
-    def config_bind(self):    return "tcp://*:5555"
-    def config_address_book(self): return {"peer-B": "tcp://127.0.0.1:5556"}
-    def config_subscriptions(self): return ["alerts.status"]
+    peer_id = "peer-A"
+    bind = "tcp://*:5555"
+    address_book = {
+        "peer-B": "tcp://127.0.0.1:5556",
+        "peer-C": "tcp://127.0.0.1:5557",
+    }
+    discovery_enabled = True
+    discovery_interval_s = 2.0
 
     def on_start(self, libby):
-        # Wait briefly for B to advertise the RPC key; fall back if slow
         try:
-            if not libby.wait_for_key("peer-B", "perf.echo", timeout_s=3.0):
-                libby.learn_peer_keys("peer-B", ["perf.echo"])
+            if not libby.wait_for_key("peer-B", "perf.echo", timeout_s=2.5):
+                libby.learn_peer_keys("peer-B", ["perf.echo", "ping.txt", "answer"])
         except AttributeError:
             pass
 
-        print("[ClientDaemon] sending perf.echo…")
+        print("[PeerA] asking B: perf.echo …")
         res = libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=8000)
-        print("[ClientDaemon] resp:", res)
+        print("[PeerA] result:", res)
 
-        sent = libby.emit("alerts.status", {"ok": True})
-        print(f"[ClientDaemon] status emitted (direct={sent})")
+        # publish a status
+        libby.publish("alerts.status", {"source": "peer-A", "ok": True})
+        print("[PeerA] published alerts.status")
 
 if __name__ == "__main__":
     PeerA().serve()

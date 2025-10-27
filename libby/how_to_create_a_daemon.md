@@ -6,6 +6,21 @@ This guide shows you how to create a  peer using the **Libby** and the **`LibbyD
 
 ---
 
+## Install (dev)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+
+# editable install
+pip install -e .[zmq]
+```
+If you do not need the ZMQ transport, you can just run:
+```bash
+pip install -e .
+```
+
+---
 
 ## 1) What `LibbyDaemon` gives you
 
@@ -22,26 +37,32 @@ You subclass `LibbyDaemon`, override a few config methods and hooks then call `.
 ## 2) Extending the daemon base class
 
 ```python
-# from libby.daemon import LibbyDaemon
+from libby.daemon import LibbyDaemon
 
-class LibbyDaemon:
-    # Config (required)
-    def config_peer_id(self) -> str: ...
-    def config_bind(self) -> str: ...
-    def config_address_book(self) -> dict[str, str]: ...
+class MyPeer(LibbyDaemon):
+    # Required
+    peer_id = "peer-X"
+    bind = "tcp://*:5555"
+    address_book = {
+        "peer-Y": "tcp://127.0.0.1:5556",
+    }
 
-    # Optional config
-    def config_discovery_enabled(self) -> bool: return True
-    def config_discovery_interval_s(self) -> float: return 5.0
-    def config_rpc_keys(self) -> list[str]: return []
-    def config_subscriptions(self) -> list[str]: return []
+    # Optional
+    discovery_enabled = True
+    discovery_interval_s = 5.0
 
-    # Hooks
-    def on_req(self, key, payload, ctx) -> dict | None: ...
-    def on_event(self, topic, msg) -> None: ...
-    def on_start(self, libby) -> None: ...
-    def on_stop(self) -> None: ...
-    def on_hello(self, libby) -> None: ...
+    # REQ/RESP
+    services = {
+        "my.service": lambda p: {"ok": True, "echo": p},
+    }
+
+    # PUB/SUB 
+    topics = {
+        "alerts.status": lambda payload: print("[X] status:", payload),
+    }
+
+if __name__ == "__main__":
+    MyPeer().serve()
 ```
 ---
 
@@ -54,29 +75,39 @@ import time
 from typing import Dict, Any
 from libby.daemon import LibbyDaemon
 
+def handle_echo(p: Dict[str, Any]):
+    # dict return
+    return {"ok": True, "t0": p.get("t0"), "t1": time.time()}
+
+def handle_ping(_p):
+    # string
+    return "pong"
+
+def handle_answer(_p):
+    # number
+    return 42
+
+def on_status(payload: Dict[str, Any]) -> None:
+    print("[PeerB] alerts.status:", payload)
+
 class PeerB(LibbyDaemon):
-    # Config
-    def config_peer_id(self): return "peer-B"
-    def config_bind(self):    return "tcp://*:5556"
-    def config_address_book(self):
-        return {"peer-A": "tcp://127.0.0.1:5555"}
+    peer_id = "peer-B"
+    bind = "tcp://*:5556"
+    address_book = {
+        "peer-A": "tcp://127.0.0.1:5555",
+        "peer-C": "tcp://127.0.0.1:5557",
+    }
+    discovery_enabled = True
+    discovery_interval_s = 2.0
 
-    # Optional config
-    def config_discovery_enabled(self): return True
-    def config_discovery_interval_s(self): return 2.0
-    def config_subscriptions(self): return ["alerts.status"]
-    def config_rpc_keys(self): return ["perf.echo"]
-
-    # RPC handler
-    def on_req(self, key: str, payload: Dict[str, Any], ctx: Dict[str, Any]):
-        if key == "perf.echo":
-            t0 = payload.get("t0")
-            return {"ok": True, "t0": t0, "t1": time.time(), "from": ctx["source"]}
-        return {"ok": False, "error": f"unknown key {key}"}
-
-    # Event handler
-    def on_event(self, topic: str, msg):
-        print(f"[PeerB] {topic} -> {msg.env.payload}")
+    services = {
+        "perf.echo": handle_echo,
+        "ping.txt":  handle_ping,
+        "answer":    handle_answer,
+    }
+    topics = {
+        "alerts.status": on_status,
+    }
 
 if __name__ == "__main__":
     PeerB().serve()
@@ -99,27 +130,28 @@ import time
 from libby.daemon import LibbyDaemon
 
 class PeerA(LibbyDaemon):
-    def config_peer_id(self): return "peer-A"
-    def config_bind(self):    return "tcp://*:5555"
-    def config_address_book(self): return {"peer-B": "tcp://127.0.0.1:5556"}
-    def config_discovery_enabled(self): return True
-    def config_discovery_interval_s(self): return 2.0
-    def config_subscriptions(self): return ["alerts.status"]
+    peer_id = "peer-A"
+    bind = "tcp://*:5555"
+    address_book = {
+        "peer-B": "tcp://127.0.0.1:5556",
+        "peer-C": "tcp://127.0.0.1:5557",
+    }
+    discovery_enabled = True
+    discovery_interval_s = 2.0
 
     def on_start(self, libby):
-        # Wait a moment for discovery
         try:
-            if not libby.wait_for_key("peer-B", "perf.echo", timeout_s=3.0):
-                libby.learn_peer_keys("peer-B", ["perf.echo"])
+            if not libby.wait_for_key("peer-B", "perf.echo", timeout_s=2.5):
+                libby.learn_peer_keys("peer-B", ["perf.echo", "ping.txt", "answer"])
         except AttributeError:
             pass
 
-        print("[PeerA] sending perf.echo to peer-B …")
+        print("[PeerA] asking B: perf.echo …")
         res = libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=8000)
         print("[PeerA] result:", res)
 
-        sent = libby.emit("alerts.status", {"source": "peer-A", "ok": True})
-        print(f"[PeerA] alerts.status emitted (direct={sent})")
+        libby.publish("alerts.status", {"source": "peer-A", "ok": True})
+        print("[PeerA] published alerts.status")
 
 if __name__ == "__main__":
     PeerA().serve()
@@ -137,53 +169,45 @@ python peer_a.py
 
 ```python
 import time
-from typing import Dict, Any, Callable
+from typing import Dict, Any
 from libby.daemon import LibbyDaemon
 
+def info(_p: Dict[str, Any]):
+    return {"ok": True, "info": "peer-C", "time": time.time()}
+
+def math_add(p: Dict[str, Any]):
+    a, b = p.get("a"), p.get("b")
+    if not isinstance(a, (int, float)) or not isinstance(b, (int, float)):
+        return {"ok": False, "error": "need numeric a and b"}
+    return {"ok": True, "sum": a + b}
+
 class PeerC(LibbyDaemon):
-    def config_peer_id(self): return "peer-C"
-    def config_bind(self):    return "tcp://*:5557"
-    def config_address_book(self):
-        return {"peer-A": "tcp://127.0.0.1:5555", "peer-B": "tcp://127.0.0.1:5556"}
-    def config_discovery_enabled(self): return True
-    def config_discovery_interval_s(self): return 2.0
-    def config_subscriptions(self): return ["alerts.status"]
+    peer_id = "peer-C"
+    bind = "tcp://*:5557"
+    address_book = {
+        "peer-A": "tcp://127.0.0.1:5555",
+        "peer-B": "tcp://127.0.0.1:5556",
+    }
+    discovery_enabled = True
+    discovery_interval_s = 2.0
 
-    def config_rpc_keys(self):
-        return list(self._handlers().keys())
-
-    def _handlers(self) -> Dict[str, Callable[[Dict[str, Any], Dict[str, Any]], Dict[str, Any]]]:
-        return {
-            "peerC.info":      self._info,
-            "math.add":        self._math_add,
-            "perf.echo.proxy": self._echo_proxy,
-        }
-
-    def on_req(self, key, payload, ctx):
-        fn = self._handlers().get(key)
-        if not fn:
-            return {"ok": False, "error": f"unknown key '{key}'"}
-        out = fn(payload, ctx)
-        return out if ("ok" in out or "error" in out) else {"ok": True, "data": out}
-
-    def _info(self, payload, ctx):
-        return {"ok": True, "peer": self.config_peer_id(), "time": time.time()}
-
-    def _math_add(self, payload, ctx):
-        a, b = payload.get("a"), payload.get("b")
-        if not isinstance(a, (int,float)) or not isinstance(b, (int,float)):
-            return {"ok": False, "error": "need numeric a,b"}
-        return {"ok": True, "sum": a + b}
-
-    def _echo_proxy(self, payload, ctx):
-        res = self.libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=6000)
-        return {"ok": True, "forwarded_to": "peer-B", "result": res}
+    services = {
+        "clientC.info": info,
+        "math.add":     math_add,
+    }
 
     def on_start(self, libby):
+        # Proxy service needing live libby handle
+        def echo_proxy(_p: Dict[str, Any]):
+            res = libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=6000)
+            return {"ok": True, "forwarded_to": "peer-B", "result": res}
+
+        self.add_service("perf.echo.proxy", echo_proxy)
+
         print("[PeerC] math.add(2,5) ->",
-              libby.rpc(self.config_peer_id(), "math.add", {"a":2,"b":5}, ttl_ms=2000))
-        sent = self.libby.emit("alerts.status", {"source": "peer-C", "ok": True})
-        print(f"[PeerC] alerts.status emitted (direct={sent})")
+              libby.rpc(self.peer_id, "math.add", {"a": 2, "b": 5}, ttl_ms=2000))
+
+        libby.publish("alerts.status", {"source": "peer-C", "ok": True})
 
 if __name__ == "__main__":
     PeerC().serve()
@@ -194,4 +218,6 @@ if __name__ == "__main__":
 - **No retries** (protocol choice): sender waits for ACK and optionally RESP; you can handle retries at the app level if needed.
 - **Transport-agnostic**: ZMQ is a transport implementing bamboo’s `Transport`.
 - **Encapsulation goal**: application peers only implement business logic (`on_req`, `on_event`) and a few config methods.
+- **Handlers are payload-only.** They receive a Python dict and return anything JSON-serializable.  
+  If the return is not a dict, LibbyDaemon auto-wraps it as `{"data": <value>}`.
 
