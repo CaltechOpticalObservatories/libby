@@ -21,6 +21,7 @@ class LibbyDaemon:
     # payload-only handlers
     services: Dict[str, RPCHandler] = {}
     topics: Dict[str, EvtHandler] = {}
+    libby: Optional[Libby] = None
 
     # optional hooks
     # pylint: disable=unused-argument
@@ -30,22 +31,31 @@ class LibbyDaemon:
     def on_event(self, topic: str, msg) -> None:
         print(f"[{self.__class__.__name__}] {topic}: {msg.env.payload}")
 
-    def config_peer_id(self) -> str: return self.peer_id or self._must("peer_id")
-    def config_bind(self) -> str: return self.bind or self._must("bind")
-    def config_address_book(self) -> Dict[str, str]: return self.address_book or self._must("address_book")
-    def config_discovery_enabled(self) -> bool: return bool(self.discovery_enabled)
-    def config_discovery_interval_s(self) -> float: return float(self.discovery_interval_s)
-    def config_rpc_keys(self) -> List[str]: return list(self.services.keys())
-    def config_subscriptions(self) -> List[str]: return list(self.topics.keys())
+    def config_peer_id(self) -> str:
+        return self.peer_id or self._must("peer_id")
+    def config_bind(self) -> str:
+        return self.bind or self._must("bind")
+    def config_address_book(self) -> Dict[str, str]:
+        return self.address_book or self._must("address_book")
+    def config_discovery_enabled(self) -> bool:
+        return bool(self.discovery_enabled)
+    def config_discovery_interval_s(self) -> float:
+        return float(self.discovery_interval_s)
+    def config_rpc_keys(self) -> List[str]:
+        return list(self.services.keys())
+    def config_subscriptions(self) -> List[str]:
+        return list(self.topics.keys())
 
     # user-facing helpers
     def add_service(self, key: str, fn: RPCHandler) -> None:
         self.services[key] = fn
-        if hasattr(self, "libby"): self._register_services({key: fn})
+        if hasattr(self, "libby"):
+            self._register_services({key: fn})
 
     def add_services(self, mapping: Dict[str, RPCHandler]) -> None:
         self.services.update(mapping)
-        if hasattr(self, "libby"): self._register_services(mapping)
+        if hasattr(self, "libby"):
+            self._register_services(mapping)
 
     def add_topic(self, topic: str, fn: EvtHandler) -> None:
         self.topics[topic] = fn
@@ -90,7 +100,8 @@ class LibbyDaemon:
 
     def serve(self) -> None:
         stop_evt = threading.Event()
-        def _sig(_s, _f): stop_evt.set()
+        def _sig(_s, _f):
+            stop_evt.set()
         signal.signal(signal.SIGINT, _sig)
         signal.signal(signal.SIGTERM, _sig)
 
@@ -120,12 +131,16 @@ class LibbyDaemon:
         except Exception as ex:
             print(f"[{self.__class__.__name__}] on_start error: {ex}", file=sys.stderr)
 
-        print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} bind={self.config_bind()}")
+        print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()}"
+              f" bind={self.config_bind()}")
         try:
-            while not stop_evt.is_set(): time.sleep(0.5)
+            while not stop_evt.is_set():
+                time.sleep(0.5)
         finally:
-            try: self.on_stop()
-            except Exception: pass
+            try:
+                self.on_stop(self.libby)
+            except Exception:
+                pass
             self.libby.stop()
             print(f"[{self.__class__.__name__}] stopped")
 
@@ -148,4 +163,3 @@ class LibbyDaemon:
             raise ValueError(f"Payload not JSON-serializable: {e}") from e
 
         return out
-
