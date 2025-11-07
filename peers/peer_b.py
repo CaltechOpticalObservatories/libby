@@ -1,43 +1,42 @@
 import time
-from libby import Libby
+from typing import Dict, Any
+from libby.daemon import LibbyDaemon
 
-PEER_ID = "peer-B"
-BIND = "tcp://*:5556"
-ADDRESS_BOOK = {
-    "peer-A": "tcp://127.0.0.1:5555",
-}
+def handle_echo(p: Dict[str, Any]):
+    # can return any JSON-serializable thing
+    return {"ok": True, "t0": p.get("t0"), "t1": time.time()}
 
-def handle_echo(payload, ctx):
-    """
-    Handler for key 'perf.echo'
-    """
-    t0 = payload.get("t0")
-    return {"ok": True, "t1": time.time(), "t0": t0, "from": ctx["source"]}
+def handle_ping(_p):
+    # returns a string
+    return "pong"
 
-def on_alert(msg):
-    """
-    Event handler for PUB topic 'alerts.status'
-    """
-    print(f"[PeerB] alerts.status event: {msg.env.payload}")
+def handle_answer(_p):
+    # returns a number
+    return 42
 
-def main():
-    libby = Libby.zmq(
-        self_id=PEER_ID,
-        bind=BIND,
-        address_book=ADDRESS_BOOK,
-        keys=["perf.echo"],
-        callback=handle_echo,
-        discover=True,               
-        discover_interval_s=2.0,
-        hello_on_start=True,
-    )
+def on_status(payload: Dict[str, Any]) -> None:
+    print("[PeerB] alerts.status:", payload)
 
-    # Subscribe to the topic and register an event handler
-    libby.listen("alerts.status", on_alert)
-    libby.subscribe("alerts.status")   # announces interest to peers
+class PeerB(LibbyDaemon):
+    peer_id = "peer-B"
+    bind = "tcp://*:5556"
+    address_book = {
+        "peer-A": "tcp://127.0.0.1:5555",
+        "peer-C": "tcp://127.0.0.1:5557",
+    }
+    discovery_enabled = True
+    discovery_interval_s = 2.0
 
-    print(f"[PeerB] up on {BIND}; serving 'perf.echo' and subscribed to 'alerts.status'")
-    libby.run_forever()
+    services = {
+        "perf.echo": handle_echo,
+        "ping.txt":  handle_ping,
+        "answer":    handle_answer,
+    }
+
+    # Topics (PUB/SUB)
+    topics = {
+        "alerts.status": on_status,
+    }
 
 if __name__ == "__main__":
-    main()
+    PeerB().serve()

@@ -1,36 +1,30 @@
 import time
-from libby import Libby
+from libby.daemon import LibbyDaemon
 
-PEER_ID = "peer-A"
-BIND = "tcp://*:5555"
-ADDRESS_BOOK = {
-    "peer-B": "tcp://127.0.0.1:5556",
-}
+class PeerA(LibbyDaemon):
+    peer_id = "peer-A"
+    bind = "tcp://*:5555"
+    address_book = {
+        "peer-B": "tcp://127.0.0.1:5556",
+        "peer-C": "tcp://127.0.0.1:5557",
+    }
+    discovery_enabled = True
+    discovery_interval_s = 2.0
 
-def main():
-    # Start with discovery enabled (HELLO broadcasts caps/keys/subs)
-    with Libby.zmq(
-        self_id=PEER_ID,
-        bind=BIND,
-        address_book=ADDRESS_BOOK,
-        discover=True,
-        discover_interval_s=2.0,   # faster announcements during dev
-        hello_on_start=True,
-    ) as libby:
+    def on_start(self, libby):
+        try:
+            if not libby.wait_for_key("peer-B", "perf.echo", timeout_s=2.5):
+                libby.learn_peer_keys("peer-B", ["perf.echo", "ping.txt", "answer"])
+        except AttributeError:
+            pass
 
-        # Wait (briefly) until we learn PeerB serves 'perf.echo'
-        libby.learn_peer_keys("peer-B", ["perf.echo"])
+        print("[PeerA] asking B: perf.echo …")
+        res = libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=8000)
+        print("[PeerA] result:", res)
 
-        print("[PeerA] sending REQ perf.echo to peer-B...")
-        result = libby.request("peer-B", key="perf.echo", payload={"t0": time.time()}, ttl_ms=8000)
-        print("[PeerA] result:", result)
-
-        # Publish a status event
-        sent = libby.publish("alerts.status", {"ok": True})
-        if sent:
-            print(f"[PeerA] published alerts.status to {sent} subscriber(s)")
-        else:
-            print("[PeerA] broadcasted alerts.status")
+        # publish a status
+        libby.publish("alerts.status", {"source": "peer-A", "ok": True})
+        print("[PeerA] published alerts.status")
 
 if __name__ == "__main__":
-    main()
+    PeerA().serve()

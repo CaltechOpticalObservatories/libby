@@ -5,14 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "libby"
 version = "0.1.0"
-description = "Libby: a tiny facade over bamboo with a ZMQ transport"
+description = "Libby: a tiny messaging library which uses bamboo with a ZMQ transport"
 readme = "README.md"
 requires-python = ">=3.9"
-license = "MIT"                        
-authors = [{name = "Your Name", email = "your.email@example.com"}]
+license = "MIT"
+authors = [
+    { name="Prakriti Gupta", email="pgupta@caltech.edu" },
+    { name="Jeb Bailey", email="jibailey@caltech.edu" },
+    { name="Michael Langmayr", email="langmayr@caltech.edu" }
+]
 dependencies = [
   "pyzmq>=25.0.0",
-  "paho-mqtt>=2.1.0"
+  "paho-mqtt>=2.1.0",
+  "bamboo @ git+https://github.com/CaltechOpticalObservatories/bamboo.git@main"
 ]
 
 [project.urls]
