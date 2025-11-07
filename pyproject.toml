@@ -16,6 +16,7 @@ authors = [
 ]
 dependencies = [
   "pyzmq>=25.0.0",
+  "paho-mqtt>=2.1.0",
   "bamboo @ git+https://github.com/CaltechOpticalObservatories/bamboo.git@main"
 ]
 
