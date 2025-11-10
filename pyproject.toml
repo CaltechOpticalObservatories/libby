@@ -28,3 +28,6 @@ Repository = "https://github.com/yourusername/your-repo"
 where = ["."]
 include = ["libby", "libby.*"]
 exclude = ["peers*", "package*"]
+
+[project.scripts]
+lshow = "libby.cli.lshow:main"
