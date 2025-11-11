@@ -13,11 +13,18 @@ def math_add(p: Dict[str, Any]):
 
 class PeerC(LibbyDaemon):
     peer_id = "peer-C"
+
+    # ZMQ config (used when transport="zmq", which is the default)
     bind = "tcp://*:5557"
     address_book = {
         "peer-A": "tcp://127.0.0.1:5555",
         "peer-B": "tcp://127.0.0.1:5556",
     }
+
+    # Transport selection: "zmq" (default) or "rabbitmq"
+    transport = "zmq"
+    rabbitmq_url = "amqp://localhost"  # Used when transport="rabbitmq"
+
     discovery_enabled = True
     discovery_interval_s = 2.0
 

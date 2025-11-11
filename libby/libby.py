@@ -76,6 +76,63 @@ class Libby:
             hello_on_start=hello_on_start,
         )
 
+    @classmethod
+    def rabbitmq(
+        cls,
+        self_id: str,
+        rabbitmq_url: str = "amqp://localhost",
+        keys: Optional[List[str]] = None,
+        callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
+        *,
+        discover: bool = True,
+        discover_interval_s: float = 5.0,
+        hello_on_start: bool = True,
+    ) -> "Libby":
+        """
+        Create a Libby instance using RabbitMQ transport.
+
+        Args:
+            self_id: Unique identifier for this peer
+            rabbitmq_url: RabbitMQ connection URL (default: "amqp://localhost")
+            keys: List of RPC keys this peer will serve
+            callback: Default callback for RPC requests
+            discover: Enable automatic peer discovery (default: True)
+            discover_interval_s: Discovery announcement interval
+            hello_on_start: Send HELLO on startup
+
+        Returns:
+            Configured Libby instance
+
+        Example:
+            >>> libby = Libby.rabbitmq(
+            ...     self_id="peer-A",
+            ...     rabbitmq_url="amqp://user:pass@localhost:5672/",
+            ...     keys=["echo"],
+            ...     discover=True
+            ... )
+        """
+        try:
+            from .rabbitmq_transport import RabbitMQTransport
+        except Exception as e:
+            raise RuntimeError(
+                "RabbitMQ transport not available. Install optional deps:\n"
+                "  pip install libby[rabbitmq]\n"
+                "or:\n"
+                "  pip install pika"
+            ) from e
+
+        t = RabbitMQTransport(peer_id=self_id, rabbitmq_url=rabbitmq_url)
+        t.start()
+        return cls(
+            self_id=self_id,
+            transport=t,
+            keys=keys,
+            callback=callback,
+            discover=discover,
+            discover_interval_s=discover_interval_s,
+            hello_on_start=hello_on_start,
+        )
+
     # lifecycle
     def start(self) -> None:
         if hasattr(self.transport, "start"):

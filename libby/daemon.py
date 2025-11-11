@@ -18,6 +18,10 @@ class LibbyDaemon:
     discovery_enabled: bool = True
     discovery_interval_s: float = 5.0
 
+    # transport selection: "zmq" (default) or "rabbitmq"
+    transport: str = "zmq"
+    rabbitmq_url: Optional[str] = None
+
     # payload-only handlers
     services: Dict[str, RPCHandler] = {}
     topics: Dict[str, EvtHandler] = {}
@@ -77,15 +81,28 @@ class LibbyDaemon:
             self.libby.serve_keys([key], self._service_adapter(fn))
 
     def build_libby(self) -> Libby:
-        return Libby.zmq(
-            self_id=self.config_peer_id(),
-            bind=self.config_bind(),
-            address_book=self.config_address_book(),
-            keys=[], callback=None,                     # register per-key
-            discover=self.config_discovery_enabled(),
-            discover_interval_s=self.config_discovery_interval_s(),
-            hello_on_start=True,
-        )
+        """Build Libby instance with selected transport (zmq or rabbitmq)."""
+        if self.transport == "rabbitmq":
+            return Libby.rabbitmq(
+                self_id=self.config_peer_id(),
+                rabbitmq_url=self.rabbitmq_url or "amqp://localhost",
+                keys=[],
+                callback=None,
+                discover=self.config_discovery_enabled(),
+                discover_interval_s=self.config_discovery_interval_s(),
+                hello_on_start=True,
+            )
+        else:
+            # Default to ZMQ
+            return Libby.zmq(
+                self_id=self.config_peer_id(),
+                bind=self.config_bind(),
+                address_book=self.config_address_book(),
+                keys=[], callback=None,                     # register per-key
+                discover=self.config_discovery_enabled(),
+                discover_interval_s=self.config_discovery_interval_s(),
+                hello_on_start=True,
+            )
 
     def serve(self) -> None:
         stop_evt = threading.Event()
@@ -119,7 +136,10 @@ class LibbyDaemon:
         except Exception as ex:
             print(f"[{self.__class__.__name__}] on_start error: {ex}", file=sys.stderr)
 
-        print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} bind={self.config_bind()}")
+        if self.transport == "rabbitmq":
+            print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} transport=rabbitmq url={self.rabbitmq_url}")
+        else:
+            print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} bind={self.config_bind()}")
         try:
             while not stop_evt.is_set(): time.sleep(0.5)
         finally:

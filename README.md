@@ -1,5 +1,5 @@
 # Libby
-Libby: a tiny messaging library which uses bamboo with a ZMQ transport
+Libby: a tiny messaging library which uses Bamboo with pluggable transports (ZMQ or RabbitMQ)
 
 ## Installation
 
