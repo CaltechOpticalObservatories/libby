@@ -1,0 +1,13 @@
+peer_id: "peer.echo.01"
+bind: "tcp://*:5555"
+
+# or fill with known peers
+address_book: {}          
+
+# Optional discovery
+discovery_enabled: true
+discovery_interval_s: 3.0
+
+# Declare exactly what this peer exposes/listens to:
+services: ["ping", "echo"]
+topics: ["sys.hello", "sys.events"]
