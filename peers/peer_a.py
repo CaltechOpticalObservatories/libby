@@ -12,8 +12,7 @@ class PeerA(LibbyDaemon):
     }
 
     # Transport selection: "zmq" (default) or "rabbitmq"
-    transport = "rabbitmq"
-    rabbitmq_url = "amqp://localhost"  # Used when transport="rabbitmq"
+    transport = "zmq"
 
     discovery_enabled = True
     discovery_interval_s = 2.0

@@ -83,10 +83,6 @@ class Libby:
         rabbitmq_url: str = "amqp://localhost",
         keys: Optional[List[str]] = None,
         callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
-        *,
-        discover: bool = True,
-        discover_interval_s: float = 5.0,
-        hello_on_start: bool = True,
     ) -> "Libby":
         """
         Create a Libby instance using RabbitMQ transport.
@@ -96,9 +92,6 @@ class Libby:
             rabbitmq_url: RabbitMQ connection URL (default: "amqp://localhost")
             keys: List of RPC keys this peer will serve
             callback: Default callback for RPC requests
-            discover: Enable automatic peer discovery (default: True)
-            discover_interval_s: Discovery announcement interval
-            hello_on_start: Send HELLO on startup
 
         Returns:
             Configured Libby instance
@@ -107,8 +100,7 @@ class Libby:
             >>> libby = Libby.rabbitmq(
             ...     self_id="peer-A",
             ...     rabbitmq_url="amqp://user:pass@localhost:5672/",
-            ...     keys=["echo"],
-            ...     discover=True
+            ...     keys=["echo"]
             ... )
         """
         try:
@@ -128,9 +120,9 @@ class Libby:
             transport=t,
             keys=keys,
             callback=callback,
-            discover=discover,
-            discover_interval_s=discover_interval_s,
-            hello_on_start=hello_on_start,
+            discover=False,
+            discover_interval_s=0,
+            hello_on_start=False,
         )
 
     # lifecycle

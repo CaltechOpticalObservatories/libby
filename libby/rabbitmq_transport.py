@@ -7,7 +7,6 @@ from pika.exceptions import AMQPError
 DestStr = str
 SrcStr = str
 
-
 class RabbitMQTransport:
     """
     RabbitMQ-based transport for Bamboo Protocol.
@@ -54,44 +53,50 @@ class RabbitMQTransport:
             self._send_connection = pika.BlockingConnection(params)
             self._send_channel = self._send_connection.channel()
 
-            # Declare exchanges
-            # Direct exchange for peer-to-peer messages
-            self._send_channel.exchange_declare(
-                exchange='libby.direct',
-                exchange_type='direct',
-                durable=False
-            )
-
-            # Fanout exchange for broadcasts
-            self._send_channel.exchange_declare(
-                exchange='libby.fanout',
-                exchange_type='fanout',
-                durable=False
-            )
-
-            # Create this peer's queue
-            queue_name = f"libby.peer.{self._peer_id}"
-            self._send_channel.queue_declare(
-                queue=queue_name,
-                durable=False,
-                auto_delete=True
-            )
-
-            # Bind queue to direct exchange with peer_id as routing key
-            self._send_channel.queue_bind(
-                queue=queue_name,
-                exchange='libby.direct',
-                routing_key=self._peer_id
-            )
-
-            # Bind queue to fanout exchange (for broadcasts)
-            self._send_channel.queue_bind(
-                queue=queue_name,
-                exchange='libby.fanout'
-            )
+            # Setup exchanges and queue on this channel
+            self._setup_topology(self._send_channel)
 
         except AMQPError as e:
             raise RuntimeError(f"Failed to setup RabbitMQ transport: {e}")
+
+    def _setup_topology(self, channel) -> None:
+        """
+        Declare exchanges, queue, and bindings on a given channel.
+        """
+        # Declare exchanges
+        channel.exchange_declare(
+            exchange='libby.direct',
+            exchange_type='direct',
+            durable=False
+        )
+
+        # Fanout exchange for broadcasts
+        channel.exchange_declare(
+            exchange='libby.fanout',
+            exchange_type='fanout',
+            durable=False
+        )
+
+        # Create this peer's queue
+        queue_name = f"libby.peer.{self._peer_id}"
+        channel.queue_declare(
+            queue=queue_name,
+            durable=False,
+            auto_delete=True
+        )
+
+        # Bind queue to direct exchange with peer_id as routing key
+        channel.queue_bind(
+            queue=queue_name,
+            exchange='libby.direct',
+            routing_key=self._peer_id
+        )
+
+        # Bind queue to fanout exchange (for broadcasts)
+        channel.queue_bind(
+            queue=queue_name,
+            exchange='libby.fanout'
+        )
 
     @property
     def mtu(self) -> int:
@@ -213,6 +218,9 @@ class RabbitMQTransport:
             recv_conn = pika.BlockingConnection(params)
             recv_ch = recv_conn.channel()
 
+            # Ensure topology is set up on this channel
+            self._setup_topology(recv_ch)
+
             # Start consuming
             recv_ch.basic_consume(
                 queue=queue_name,
@@ -237,6 +245,10 @@ class RabbitMQTransport:
                         # Reconnect
                         recv_conn = pika.BlockingConnection(params)
                         recv_ch = recv_conn.channel()
+
+                        # Re-declare exchanges, queue, and bindings (idempotent)
+                        self._setup_topology(recv_ch)
+
                         recv_ch.basic_consume(
                             queue=queue_name,
                             on_message_callback=message_callback,
