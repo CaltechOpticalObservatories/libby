@@ -4,7 +4,9 @@ from dataclasses import is_dataclass, asdict
 import collections.abc as cabc
 import signal, sys, threading, time
 from typing import Any, Callable, Dict, List, Optional
+
 from .libby import Libby
+from .config import load_config, with_env_overrides
 
 Payload = Dict[str, Any]
 RPCHandler = Callable[[Payload], Dict[str, Any]]
@@ -45,22 +47,60 @@ class LibbyDaemon:
     # transport selection: "zmq" (default) or "rabbitmq"
     transport: str = "zmq"
     rabbitmq_url: Optional[str] = None
+    # internal config
+    _config: Dict[str, Any] = {}
 
     # payload-only handlers
     services: Dict[str, RPCHandler] = {}
     topics: Dict[str, EvtHandler] = {}
 
+    def __init__(self) -> None:
+        # Ensure per-instance handler tables
+        if type(self).services is self.services:
+            self.services = {}
+        if type(self).topics is self.topics:
+            self.topics = {}
+
+    # Config ingestion
+    @classmethod
+    def from_config_file(cls, path: str, *, env_prefix: str = "LIBBY_") -> "LibbyDaemon":
+        """
+        Build a daemon from a JSON or YAML file and then apply environment
+        overrides whose keys start with env_prefix (default: LIBBY_).
+        """
+        cfg = with_env_overrides(load_config(path), prefix=env_prefix)
+        return cls.from_config(cfg)
+
+    @classmethod
+    def from_config(cls, cfg: Dict[str, Any]) -> "LibbyDaemon":
+        """
+        Build a daemon from a pre-loaded dict. Only the known public attributes
+        are mapped; anything else stays in _config for user code to read.
+        """
+        d = cls()
+        d._config = dict(cfg)
+
+        # map expected fields if provided
+        if "peer_id" in cfg: d.peer_id = cfg["peer_id"]
+        if "bind" in cfg: d.bind = cfg["bind"]
+        if "address_book" in cfg: d.address_book = cfg["address_book"]
+        if "discovery_enabled" in cfg: d.discovery_enabled = bool(cfg["discovery_enabled"])
+        if "discovery_interval_s" in cfg: d.discovery_interval_s = float(cfg["discovery_interval_s"])
+
+        return d
+
     # optional hooks
     def on_start(self, libby: Libby) -> None: ...
-    def on_stop(self) -> None: ...
+    def on_stop(self, libby: Optional[Libby] = None) -> None: ...
     def on_hello(self, libby: Libby) -> None: ...
     def on_event(self, topic: str, msg) -> None:
         print(f"[{self.__class__.__name__}] {topic}: {msg.env.payload}")
 
+    # config getters
     def config_peer_id(self) -> str: return self.peer_id or self._must("peer_id")
     def config_bind(self) -> str: return self.bind or self._must("bind")
-    def config_address_book(self) -> Dict[str, str]: return self.address_book or self._must("address_book")
     def config_rabbitmq_url(self) -> str: return self.rabbitmq_url or "amqp://localhost"
+    def config_address_book(self) -> Dict[str, str]: return self.address_book if self.address_book is not None else {}
     def config_discovery_enabled(self) -> bool: return bool(self.discovery_enabled)
     def config_discovery_interval_s(self) -> float: return float(self.discovery_interval_s)
     def config_rpc_keys(self) -> List[str]: return list(self.services.keys())
@@ -189,4 +229,3 @@ class LibbyDaemon:
             raise ValueError(f"Payload not JSON-serializable: {e}") from e
 
         return out
-
