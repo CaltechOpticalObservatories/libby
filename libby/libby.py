@@ -1,3 +1,4 @@
+"""" libby.py """
 from __future__ import annotations
 from typing import Callable, Dict, List, Optional, Any
 import time
@@ -6,7 +7,9 @@ from bamboo.keys import KeyRegistry
 from bamboo.protocol import Protocol
 from bamboo.discovery import Discovery
 
+
 class Libby:
+    """ Libby Class"""
     def __init__(
         self,
         self_id: str,
@@ -31,7 +34,8 @@ class Libby:
         # Periodic discovery (provided by bamboo)
         self._disco: Optional[Discovery] = None
         if discover:
-            self._disco = Discovery(self.proto.send, self_id, self.keys, every_seconds=int(discover_interval_s))
+            self._disco = Discovery(
+                self.proto.send, self_id, self.keys, every_seconds=int(discover_interval_s))
             if hello_on_start:
                 try:
                     self._disco.announce_now()
@@ -55,6 +59,7 @@ class Libby:
         discover_interval_s: float = 5.0,
         hello_on_start: bool = True,
     ) -> "Libby":
+        """ Create a Libby instance using ZMQ transport."""
         try:
             from .zmq_transport import ZmqTransport
         except Exception as e:
@@ -127,22 +132,31 @@ class Libby:
 
     # lifecycle
     def start(self) -> None:
+        """ Start the transport . """
         if hasattr(self.transport, "start"):
-            try: self.transport.start()
-            except Exception: pass
+            try:
+                self.transport.start()
+            except Exception:
+                pass
 
     def stop(self) -> None:
         if getattr(self, "_disco", None):
-            try: self._disco.stop()
-            except Exception: pass
+            try:
+                self._disco.stop()
+            except Exception:
+                pass
         if hasattr(self.transport, "stop"):
-            try: self.transport.stop()
-            except Exception: pass
+            try:
+                self.transport.stop()
+            except Exception:
+                pass
 
     close = stop
 
-    def __enter__(self): return self
-    def __exit__(self, exc_type, exc, tb): self.stop()
+    def __enter__(self):
+        return self
+    def __exit__(self, exc_type, exc, tb):
+        self.stop()
 
     # thin passthroughs to bamboo.Protocol
     def request(self, peer_id: str, key: str, payload: Dict[str, Any], ttl_ms: int = 8000):
@@ -188,7 +202,8 @@ class Libby:
     def knows_key(self, peer_id: str, key: str) -> bool:
         return self.proto.keys.peer_supports(peer_id, key)
 
-    def wait_for_key(self, peer_id: str, key: str, timeout_s: float = 3.0, poll_s: float = 0.05) -> bool:
+    def wait_for_key(self, peer_id: str, key: str,
+                     timeout_s: float = 3.0, poll_s: float = 0.05) -> bool:
         deadline = time.time() + timeout_s
         while time.time() < deadline:
             if self.knows_key(peer_id, key):
@@ -209,6 +224,7 @@ class Libby:
 
     def run_forever(self) -> None:
         try:
-            while True: time.sleep(1.0)
+            while True:
+                time.sleep(1.0)
         except KeyboardInterrupt:
             self.stop()

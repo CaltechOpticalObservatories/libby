@@ -1,8 +1,12 @@
+""" daemon.py contains the libby daemon """
 from __future__ import annotations
 import json
 from dataclasses import is_dataclass, asdict
 import collections.abc as cabc
-import signal, sys, threading, time
+import signal
+import sys
+import threading
+import time
 from typing import Any, Callable, Dict, List, Optional
 
 from .libby import Libby
@@ -11,6 +15,7 @@ from .config import load_config, with_env_overrides
 Payload = Dict[str, Any]
 RPCHandler = Callable[[Payload], Dict[str, Any]]
 EvtHandler = Callable[[Payload], None]
+
 
 class LibbyDaemon:
     """
@@ -37,6 +42,7 @@ class LibbyDaemon:
         Note: RabbitMQ doesn't need bind or address_book since routing is
         handled automatically by the broker.
     """
+    # pylint: disable=too-many-instance-attributes, too-many-public-methods
     # simple attributes users set
     peer_id: Optional[str] = None
     bind: Optional[str] = None
@@ -60,6 +66,7 @@ class LibbyDaemon:
             self.services = {}
         if type(self).topics is self.topics:
             self.topics = {}
+        self.libby = None
 
     # Config ingestion
     @classmethod
@@ -81,11 +88,16 @@ class LibbyDaemon:
         d._config = dict(cfg)
 
         # map expected fields if provided
-        if "peer_id" in cfg: d.peer_id = cfg["peer_id"]
-        if "bind" in cfg: d.bind = cfg["bind"]
-        if "address_book" in cfg: d.address_book = cfg["address_book"]
-        if "discovery_enabled" in cfg: d.discovery_enabled = bool(cfg["discovery_enabled"])
-        if "discovery_interval_s" in cfg: d.discovery_interval_s = float(cfg["discovery_interval_s"])
+        if "peer_id" in cfg:
+            d.peer_id = cfg["peer_id"]
+        if "bind" in cfg:
+            d.bind = cfg["bind"]
+        if "address_book" in cfg:
+            d.address_book = cfg["address_book"]
+        if "discovery_enabled" in cfg:
+            d.discovery_enabled = bool(cfg["discovery_enabled"])
+        if "discovery_interval_s" in cfg:
+            d.discovery_interval_s = float(cfg["discovery_interval_s"])
 
         return d
 
@@ -97,31 +109,53 @@ class LibbyDaemon:
         print(f"[{self.__class__.__name__}] {topic}: {msg.env.payload}")
 
     # config getters
-    def config_peer_id(self) -> str: return self.peer_id or self._must("peer_id")
-    def config_bind(self) -> str: return self.bind or self._must("bind")
-    def config_rabbitmq_url(self) -> str: return self.rabbitmq_url or "amqp://localhost"
-    def config_address_book(self) -> Dict[str, str]: return self.address_book if self.address_book is not None else {}
-    def config_discovery_enabled(self) -> bool: return bool(self.discovery_enabled)
-    def config_discovery_interval_s(self) -> float: return float(self.discovery_interval_s)
-    def config_rpc_keys(self) -> List[str]: return list(self.services.keys())
-    def config_subscriptions(self) -> List[str]: return list(self.topics.keys())
+    def config_peer_id(self) -> str:
+        """ return the peer_id """
+        return self.peer_id or self._must("peer_id")
+    def config_bind(self) -> str:
+        """ return the binding """
+        return self.bind or self._must("bind")
+    def config_rabbitmq_url(self) -> str:
+        """ return the rabbitmq_url """
+        return self.rabbitmq_url or "amqp://localhost"
+    def config_address_book(self) -> Dict[str, str]:
+        """ return the address_book """
+        return self.address_book if self.address_book is not None else {}
+    def config_discovery_enabled(self) -> bool:
+        """ return the discovery_enabled boolean """
+        return bool(self.discovery_enabled)
+    def config_discovery_interval_s(self) -> float:
+        """ return the discovery_interval_s """
+        return float(self.discovery_interval_s)
+    def config_rpc_keys(self) -> List[str]:
+        """ return a list of keys """
+        return list(self.services.keys())
+    def config_subscriptions(self) -> List[str]:
+        """ return a list of subscriptions """
+        return list(self.topics.keys())
 
     # user-facing helpers
     def add_service(self, key: str, fn: RPCHandler) -> None:
+        """ add a single service """
         self.services[key] = fn
-        if hasattr(self, "libby"): self._register_services({key: fn})
+        if hasattr(self, "libby"):
+            self._register_services({key: fn})
 
     def add_services(self, mapping: Dict[str, RPCHandler]) -> None:
+        """ add multiple services """
         self.services.update(mapping)
-        if hasattr(self, "libby"): self._register_services(mapping)
+        if hasattr(self, "libby"):
+            self._register_services(mapping)
 
     def add_topic(self, topic: str, fn: EvtHandler) -> None:
+        """ add a single topic """
         self.topics[topic] = fn
         if hasattr(self, "libby"):
             self.libby.listen(topic, lambda msg, _h=fn: _h(msg.env.payload))
             self.libby.subscribe(topic)
 
     def add_topics(self, mapping: Dict[str, EvtHandler]) -> None:
+        """ add multiple topics """
         self.topics.update(mapping)
         if hasattr(self, "libby"):
             for topic, fn in mapping.items():
@@ -154,21 +188,23 @@ class LibbyDaemon:
                 keys=[],
                 callback=None,
             )
-        else:
-            # Default to ZMQ
-            return Libby.zmq(
-                self_id=self.config_peer_id(),
-                bind=self.config_bind(),
-                address_book=self.config_address_book(),
-                keys=[], callback=None,                     # register per-key
-                discover=self.config_discovery_enabled(),
-                discover_interval_s=self.config_discovery_interval_s(),
-                hello_on_start=True,
-            )
+
+        # Default to ZMQ
+        return Libby.zmq(
+            self_id=self.config_peer_id(),
+            bind=self.config_bind(),
+            address_book=self.config_address_book(),
+            keys=[], callback=None,                     # register per-key
+            discover=self.config_discovery_enabled(),
+            discover_interval_s=self.config_discovery_interval_s(),
+            hello_on_start=True,
+        )
 
     def serve(self) -> None:
+        """ start serving """
         stop_evt = threading.Event()
-        def _sig(_s, _f): stop_evt.set()
+        def _sig(_s, _f):
+            stop_evt.set()
         signal.signal(signal.SIGINT, _sig)
         signal.signal(signal.SIGTERM, _sig)
 
@@ -199,14 +235,19 @@ class LibbyDaemon:
             print(f"[{self.__class__.__name__}] on_start error: {ex}", file=sys.stderr)
 
         if self.transport == "rabbitmq":
-            print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} transport=rabbitmq url={self.rabbitmq_url}")
+            print(f"[{self.__class__.__name__}] "
+                  f"up: id={self.config_peer_id()} transport=rabbitmq url={self.rabbitmq_url}")
         else:
-            print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} bind={self.config_bind()}")
+            print(f"[{self.__class__.__name__}] "
+                  f"up: id={self.config_peer_id()} bind={self.config_bind()}")
         try:
-            while not stop_evt.is_set(): time.sleep(0.5)
+            while not stop_evt.is_set():
+                time.sleep(0.5)
         finally:
-            try: self.on_stop()
-            except Exception: pass
+            try:
+                self.on_stop()
+            except Exception:
+                pass
             self.libby.stop()
             print(f"[{self.__class__.__name__}] stopped")
 
