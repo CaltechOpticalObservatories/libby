@@ -17,6 +17,7 @@ class PeerC(LibbyDaemon):
     address_book = {
         "peer-A": "tcp://127.0.0.1:5555",
         "peer-B": "tcp://127.0.0.1:5556",
+        "peer-C": "tcp://127.0.0.1:5557"
     }
     discovery_enabled = True
     discovery_interval_s = 2.0
