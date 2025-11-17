@@ -76,6 +76,55 @@ class Libby:
             hello_on_start=hello_on_start,
         )
 
+    @classmethod
+    def rabbitmq(
+        cls,
+        self_id: str,
+        rabbitmq_url: str = "amqp://localhost",
+        keys: Optional[List[str]] = None,
+        callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
+    ) -> "Libby":
+        """
+        Create a Libby instance using RabbitMQ transport.
+
+        Args:
+            self_id: Unique identifier for this peer
+            rabbitmq_url: RabbitMQ connection URL (default: "amqp://localhost")
+            keys: List of RPC keys this peer will serve
+            callback: Default callback for RPC requests
+
+        Returns:
+            Configured Libby instance
+
+        Example:
+            >>> libby = Libby.rabbitmq(
+            ...     self_id="peer-A",
+            ...     rabbitmq_url="amqp://user:pass@localhost:5672/",
+            ...     keys=["echo"]
+            ... )
+        """
+        try:
+            from .rabbitmq_transport import RabbitMQTransport
+        except Exception as e:
+            raise RuntimeError(
+                "RabbitMQ transport not available. Install optional deps:\n"
+                "  pip install libby[rabbitmq]\n"
+                "or:\n"
+                "  pip install pika"
+            ) from e
+
+        t = RabbitMQTransport(peer_id=self_id, rabbitmq_url=rabbitmq_url)
+        t.start()
+        return cls(
+            self_id=self_id,
+            transport=t,
+            keys=keys,
+            callback=callback,
+            discover=False,
+            discover_interval_s=0,
+            hello_on_start=False,
+        )
+
     # lifecycle
     def start(self) -> None:
         if hasattr(self.transport, "start"):

@@ -3,11 +3,17 @@ from libby.daemon import LibbyDaemon
 
 class PeerA(LibbyDaemon):
     peer_id = "peer-A"
+
+    # ZMQ config (used when transport="zmq", which is the default)
     bind = "tcp://*:5555"
     address_book = {
         "peer-B": "tcp://127.0.0.1:5556",
         "peer-C": "tcp://127.0.0.1:5557",
     }
+
+    # Transport selection: "zmq" (default) or "rabbitmq"
+    transport = "zmq"
+
     discovery_enabled = True
     discovery_interval_s = 2.0
 

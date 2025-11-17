@@ -11,6 +11,30 @@ RPCHandler = Callable[[Payload], Dict[str, Any]]
 EvtHandler = Callable[[Payload], None]
 
 class LibbyDaemon:
+    """
+    Base daemon class for Libby peers with support for multiple transports.
+
+    ZMQ Usage:
+        class MyPeer(LibbyDaemon):
+            peer_id = "my-peer"
+            bind = "tcp://*:5555"
+            address_book = {"other-peer": "tcp://localhost:5556"}
+
+            services = {"echo": lambda payload: {"echo": payload}}
+            topics = {"alerts": lambda payload: print(payload)}
+
+    RabbitMQ Usage:
+        class MyPeer(LibbyDaemon):
+            transport = "rabbitmq"
+            peer_id = "my-peer"
+            rabbitmq_url = "amqp://localhost"  # optional, defaults to this
+
+            services = {"echo": lambda payload: {"echo": payload}}
+            topics = {"alerts": lambda payload: print(payload)}
+
+        Note: RabbitMQ doesn't need bind or address_book since routing is
+        handled automatically by the broker.
+    """
     # simple attributes users set
     peer_id: Optional[str] = None
     bind: Optional[str] = None
@@ -18,6 +42,11 @@ class LibbyDaemon:
     discovery_enabled: bool = True
     discovery_interval_s: float = 5.0
 
+    # transport selection: "zmq" (default) or "rabbitmq"
+    transport: str = "zmq"
+    rabbitmq_url: Optional[str] = None
+    # internal config
+    _config: Dict[str, Any] = {}
     # payload-only handlers
     services: Dict[str, RPCHandler] = {}
     topics: Dict[str, EvtHandler] = {}
@@ -77,6 +106,8 @@ class LibbyDaemon:
     def config_peer_id(self) -> str: return self.peer_id or self._must("peer_id")
     def config_bind(self) -> str: return self.bind or self._must("bind")
     def config_address_book(self) -> Dict[str, str]: return self.address_book or self._must("address_book")
+    def config_rabbitmq_url(self) -> str: return self.rabbitmq_url or "amqp://localhost"
+    def config_address_book(self) -> Dict[str, str]: return self.address_book if self.address_book is not None else {}
     def config_discovery_enabled(self) -> bool: return bool(self.discovery_enabled)
     def config_discovery_interval_s(self) -> float: return float(self.discovery_interval_s)
     def config_rpc_keys(self) -> List[str]: return list(self.services.keys())
@@ -122,15 +153,25 @@ class LibbyDaemon:
             self.libby.serve_keys([key], self._service_adapter(fn))
 
     def build_libby(self) -> Libby:
-        return Libby.zmq(
-            self_id=self.config_peer_id(),
-            bind=self.config_bind(),
-            address_book=self.config_address_book(),
-            keys=[], callback=None,                     # register per-key
-            discover=self.config_discovery_enabled(),
-            discover_interval_s=self.config_discovery_interval_s(),
-            hello_on_start=True,
-        )
+        """Build Libby instance with selected transport."""
+        if self.transport == "rabbitmq":
+            return Libby.rabbitmq(
+                self_id=self.config_peer_id(),
+                rabbitmq_url=self.config_rabbitmq_url(),
+                keys=[],
+                callback=None,
+            )
+        else:
+            # Default to ZMQ
+            return Libby.zmq(
+                self_id=self.config_peer_id(),
+                bind=self.config_bind(),
+                address_book=self.config_address_book(),
+                keys=[], callback=None,                     # register per-key
+                discover=self.config_discovery_enabled(),
+                discover_interval_s=self.config_discovery_interval_s(),
+                hello_on_start=True,
+            )
 
     def serve(self) -> None:
         stop_evt = threading.Event()
@@ -164,7 +205,10 @@ class LibbyDaemon:
         except Exception as ex:
             print(f"[{self.__class__.__name__}] on_start error: {ex}", file=sys.stderr)
 
-        print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} bind={self.config_bind()}")
+        if self.transport == "rabbitmq":
+            print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} transport=rabbitmq url={self.rabbitmq_url}")
+        else:
+            print(f"[{self.__class__.__name__}] up: id={self.config_peer_id()} bind={self.config_bind()}")
         try:
             while not stop_evt.is_set(): time.sleep(0.5)
         finally:

@@ -1,8 +1,8 @@
 # How to Build a Peer with `LibbyDaemon`
 
-This guide shows you how to create a  peer using the **Libby** and the **`LibbyDaemon`** base class. You’ll wire a transport, discovery, RPC handlers, and pub/sub with just a few overrides.
+This guide shows you how to create a peer using the **Libby** and the **`LibbyDaemon`** base class. You'll wire a transport, discovery, RPC handlers, and pub/sub with just a few overrides.
 
-> Libby is transport-agnostic. Examples below use **ZMQ** transport.
+> Libby is transport-agnostic. Examples below show both **ZMQ** (peer-to-peer) and **RabbitMQ** (brokered) transports.
 
 ---
 
@@ -13,11 +13,19 @@ python -m venv .venv
 source .venv/bin/activate
 
 # editable install
-pip install -e .[zmq]
-```
-If you do not need the ZMQ transport, you can just run:
-```bash
 pip install -e .
+```
+
+For RabbitMQ transport, you'll also need a RabbitMQ server running:
+
+```bash
+# macOS with Homebrew
+brew install rabbitmq
+brew services start rabbitmq
+
+# Ubuntu/Debian
+sudo apt-get install rabbitmq-server
+sudo systemctl start rabbitmq-server
 ```
 
 ---
@@ -25,8 +33,8 @@ pip install -e .
 ## 1) What `LibbyDaemon` gives you
 
 - **Lifecycle**: easy start/stop, and proper termination handling
-- **Transport**: default `Libby.zmq(...)` factory (or supply your own transport)
-- **Discovery**: optional periodic HELLO 
+- **Transport**: choose ZMQ (peer-to-peer) or RabbitMQ (brokered) with a single line
+- **Discovery**: optional periodic HELLO
 - **RPC (REQ/RESP)**: register keys and handle requests in one method
 - **Pub/Sub (PUB)**: register event listeners and subscribe to topics
 
@@ -36,12 +44,17 @@ You subclass `LibbyDaemon`, override a few config methods and hooks then call `.
 
 ## 2) Extending the daemon base class
 
+### ZMQ Transport (default - peer-to-peer)
+
 ```python
 from libby.daemon import LibbyDaemon
 
 class MyPeer(LibbyDaemon):
     # Required
     peer_id = "peer-X"
+
+    # ZMQ config (default transport)
+    transport = "zmq"  # optional, this is the default
     bind = "tcp://*:5555"
     address_book = {
         "peer-Y": "tcp://127.0.0.1:5556",
@@ -56,14 +69,57 @@ class MyPeer(LibbyDaemon):
         "my.service": lambda p: {"ok": True, "echo": p},
     }
 
-    # PUB/SUB 
+    # PUB/SUB
     topics = {
         "alerts.status": lambda payload: print("[X] status:", payload),
     }
 
+    def on_start(self, libby):
+        # Manually teach peers about each other (discovery workaround)
+        libby.learn_peer_keys("peer-Y", ["service1", "service2"])
+
 if __name__ == "__main__":
     MyPeer().serve()
 ```
+
+### RabbitMQ Transport (brokered)
+
+```python
+from libby.daemon import LibbyDaemon
+
+class MyPeer(LibbyDaemon):
+    # Required
+    peer_id = "peer-X"
+
+    # RabbitMQ config
+    transport = "rabbitmq"
+    rabbitmq_url = "amqp://localhost"  # or "amqp://user:pass@host:5672/"
+
+    # No bind or address_book needed - broker handles routing!
+
+    # Optional
+    discovery_enabled = True
+    discovery_interval_s = 5.0
+
+    # REQ/RESP
+    services = {
+        "my.service": lambda p: {"ok": True, "echo": p},
+    }
+
+    # PUB/SUB
+    topics = {
+        "alerts.status": lambda payload: print("[X] status:", payload),
+    }
+
+    def on_start(self, libby):
+        # Manually teach peers about each other (discovery workaround)
+        libby.learn_peer_keys("peer-Y", ["service1", "service2"])
+
+if __name__ == "__main__":
+    MyPeer().serve()
+```
+
+**Note:** Currently, you need to manually specify peer keys using `learn_peer_keys()`. Automatic discovery is not yet fully working with either transport.
 ---
 
 ## 3) A simple peer
@@ -213,11 +269,33 @@ if __name__ == "__main__":
     PeerC().serve()
 ```
 
-## 6) Design Notes
+## 6) Transport Selection
+
+Libby supports two transports that you can switch between with a single line:
+
+### ZMQ Transport (default)
+- **Peer-to-peer**: Direct socket connections between peers
+- **Requires**: `bind` address and `address_book` with peer locations
+- **Best for**: Low-latency, direct communication, no infrastructure
+- **Setup**: No server needed, just run the peers
+
+### RabbitMQ Transport
+- **Brokered**: All messages go through RabbitMQ server
+- **Requires**: RabbitMQ server running, `rabbitmq_url`
+- **No address book needed**: Broker handles all routing automatically
+- **Best for**: Dynamic scaling, easier deployment, built-in monitoring
+- **Setup**: Install and start RabbitMQ server
+
+**To switch transports**: Just change `transport = "zmq"` to `transport = "rabbitmq"` in your peer class. Everything else stays the same!
+
+---
+
+## 7) Design Notes
 
 - **No retries** (protocol choice): sender waits for ACK and optionally RESP; you can handle retries at the app level if needed.
-- **Transport-agnostic**: ZMQ is a transport implementing bamboo’s `Transport`.
+- **Transport-agnostic**: Both ZMQ and RabbitMQ implement Bamboo's `Transport` interface. The same peer code works with either transport.
 - **Encapsulation goal**: application peers only implement business logic (`on_req`, `on_event`) and a few config methods.
-- **Handlers are payload-only.** They receive a Python dict and return anything JSON-serializable.  
+- **Handlers are payload-only.** They receive a Python dict and return anything JSON-serializable.
   If the return is not a dict, LibbyDaemon auto-wraps it as `{"data": <value>}`.
+- **Discovery workaround**: Currently, automatic peer discovery needs manual key learning via `libby.learn_peer_keys()` in `on_start()`.
 

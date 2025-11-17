@@ -19,20 +19,8 @@ def on_status(payload: Dict[str, Any]) -> None:
 
 class PeerB(LibbyDaemon):
     peer_id = "peer-B"
-
-    # ZMQ config (used when transport="zmq", which is the default)
-    bind = "tcp://*:5556"
-    address_book = {
-        "peer-A": "tcp://127.0.0.1:5555",
-        "peer-C": "tcp://127.0.0.1:5557",
-        "peer-D": "tcp://127.0.0.1:5558",
-    }
-
-    # Transport selection: "zmq" (default) or "rabbitmq"
-    transport = "zmq"
-
-    discovery_enabled = True
-    discovery_interval_s = 2.0
+    transport = "rabbitmq"
+    rabbitmq_url = "amqp://localhost"
 
     services = {
         "perf.echo": handle_echo,
