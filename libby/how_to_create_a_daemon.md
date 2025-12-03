@@ -94,6 +94,7 @@ class MyPeer(LibbyDaemon):
     # RabbitMQ config
     transport = "rabbitmq"
     rabbitmq_url = "amqp://localhost"  # or "amqp://user:pass@host:5672/"
+    group_id = "workers"  # optional
 
     # No bind or address_book needed - broker handles routing!
 
@@ -287,6 +288,20 @@ Libby supports two transports that you can switch between with a single line:
 - **Setup**: Install and start RabbitMQ server
 
 **To switch transports**: Just change `transport = "zmq"` to `transport = "rabbitmq"` in your peer class. Everything else stays the same!
+
+### Group ID (optional)
+
+Optional `group_id` for grouping peers:
+
+```python
+class MyPeer(LibbyDaemon):
+    peer_id = "worker-1"
+    transport = "zmq"  # or "rabbitmq"
+    group_id = "workers"    # group this peer belongs to
+```
+
+- **RabbitMQ**: The group ID is included in the queue name (e.g., `libby.group.workers.peer.worker-1`) and enables group-aware features.
+- **ZMQ**: The group ID is stored as metadata and can be used for group-aware routing functions (turn on all devices in a group).
 
 ---
 

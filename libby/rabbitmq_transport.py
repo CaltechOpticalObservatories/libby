@@ -20,16 +20,20 @@ class RabbitMQTransport:
     No address book needed - RabbitMQ broker handles all routing.
     """
 
-    def __init__(self, peer_id: str, rabbitmq_url: str = "amqp://localhost"):
+    def __init__(self, peer_id: str, rabbitmq_url: str = "amqp://localhost", group_id: Optional[str] = None):
         """
         Initialize RabbitMQ transport.
 
         Args:
             peer_id: Unique identifier for this peer
             rabbitmq_url: RabbitMQ connection URL (e.g., "amqp://user:pass@host:5672/")
+            group_id: Optional group identifier. If provided, included in queue name
+                      for future group functionality.
         """
         self._peer_id = peer_id
         self._url = rabbitmq_url
+        self._group_id = group_id
+        self._queue_name = self._build_queue_name()
         self._cb: Optional[Callable[[SrcStr, bytes], None]] = None
 
         # Send connection (used in main thread)
@@ -59,6 +63,12 @@ class RabbitMQTransport:
         except AMQPError as e:
             raise RuntimeError(f"Failed to setup RabbitMQ transport: {e}")
 
+    def _build_queue_name(self) -> str:
+        """Build queue name, including group_id if provided."""
+        if self._group_id:
+            return f"libby.group.{self._group_id}.peer.{self._peer_id}"
+        return f"libby.peer.{self._peer_id}"
+
     def _setup_topology(self, channel) -> None:
         """
         Declare exchanges, queue, and bindings on a given channel.
@@ -78,25 +88,28 @@ class RabbitMQTransport:
         )
 
         # Create this peer's queue
-        queue_name = f"libby.peer.{self._peer_id}"
         channel.queue_declare(
-            queue=queue_name,
+            queue=self._queue_name,
             durable=False,
             auto_delete=True
         )
 
         # Bind queue to direct exchange with peer_id as routing key
         channel.queue_bind(
-            queue=queue_name,
+            queue=self._queue_name,
             exchange='libby.direct',
             routing_key=self._peer_id
         )
 
         # Bind queue to fanout exchange (for broadcasts)
         channel.queue_bind(
-            queue=queue_name,
+            queue=self._queue_name,
             exchange='libby.fanout'
         )
+
+    @property
+    def group_id(self) -> Optional[str]:
+        return self._group_id
 
     @property
     def mtu(self) -> int:
@@ -191,7 +204,6 @@ class RabbitMQTransport:
         """Message receive loop - runs in background thread with its own connection."""
         recv_conn = None
         recv_ch = None
-        queue_name = f"libby.peer.{self._peer_id}"
 
         def message_callback(ch, method, properties, body):
             """Handle incoming message."""
@@ -223,7 +235,7 @@ class RabbitMQTransport:
 
             # Start consuming
             recv_ch.basic_consume(
-                queue=queue_name,
+                queue=self._queue_name,
                 on_message_callback=message_callback,
                 auto_ack=False  # Manual ack for reliability
             )
@@ -250,7 +262,7 @@ class RabbitMQTransport:
                         self._setup_topology(recv_ch)
 
                         recv_ch.basic_consume(
-                            queue=queue_name,
+                            queue=self._queue_name,
                             on_message_callback=message_callback,
                             auto_ack=False
                         )
