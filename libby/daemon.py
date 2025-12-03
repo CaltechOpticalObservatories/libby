@@ -167,6 +167,7 @@ class LibbyDaemon:
                 discover=self.config_discovery_enabled(),
                 discover_interval_s=self.config_discovery_interval_s(),
                 hello_on_start=True,
+                group_id=self.config_group_id(),
             )
 
     def serve(self) -> None:

@@ -18,7 +18,7 @@ class ZmqTransport(Transport):
       We pass IDENT as "peer:<peer_id>" to the Protocol callback.
     """
 
-    def __init__(self, bind_router: str, address_book: Dict[str, str], my_id: str):
+    def __init__(self, bind_router: str, address_book: Dict[str, str], my_id: str, group_id: Optional[str] = None):
         self._ctx = zmq.Context.instance()
 
         self._router = self._ctx.socket(zmq.ROUTER)
@@ -36,6 +36,11 @@ class ZmqTransport(Transport):
         self._send_lock = threading.Lock()
 
         self._id = my_id  # local peer id
+        self._group_id = group_id
+
+    @property
+    def group_id(self) -> Optional[str]:
+        return self._group_id
 
     @property
     def mtu(self) -> int:

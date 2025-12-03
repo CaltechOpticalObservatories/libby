@@ -54,6 +54,7 @@ class Libby:
         discover: bool = False,
         discover_interval_s: float = 5.0,
         hello_on_start: bool = True,
+        group_id: Optional[str] = None,
     ) -> "Libby":
         try:
             from .zmq_transport import ZmqTransport
@@ -64,7 +65,7 @@ class Libby:
                 "or provide your own Transport implementation."
             ) from e
 
-        t = ZmqTransport(bind_router=bind, address_book=address_book, my_id=self_id)
+        t = ZmqTransport(bind_router=bind, address_book=address_book, my_id=self_id, group_id=group_id)
         t.start()
         return cls(
             self_id=self_id,
@@ -93,7 +94,7 @@ class Libby:
             rabbitmq_url: RabbitMQ connection URL (default: "amqp://localhost")
             keys: List of RPC keys this peer will serve
             callback: Default callback for RPC requests
-            group_id: Optional group identifier for the queue name
+            group_id: Optional group identifier
 
         Returns:
             Configured Libby instance
