@@ -108,6 +108,10 @@ class RabbitMQTransport:
         )
 
     @property
+    def group_id(self) -> Optional[str]:
+        return self._group_id
+
+    @property
     def mtu(self) -> int:
         """Maximum transmission unit - RabbitMQ can handle large messages."""
         return 512 * 1024
