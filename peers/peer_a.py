@@ -9,6 +9,7 @@ class PeerA(LibbyDaemon):
     address_book = {
         "peer-B": "tcp://127.0.0.1:5556",
         "peer-C": "tcp://127.0.0.1:5557",
+        "cli": "tcp://127.0.0.1:56001",
     }
 
     # Transport selection: "zmq" (default) or "rabbitmq"

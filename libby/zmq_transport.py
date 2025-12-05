@@ -24,6 +24,7 @@ class ZmqTransport(Transport):
         self._router = self._ctx.socket(zmq.ROUTER)
         self._router.setsockopt(zmq.LINGER, 0)
         self._router.bind(bind_router)
+        self._router_id_by_peer: Dict[str, bytes] = {}
 
         self._dealers: Dict[str, zmq.Socket] = {}
         self._book: Dict[str, str] = dict(address_book)
@@ -77,17 +78,41 @@ class ZmqTransport(Transport):
     def on_receive(self, cb: Callable[[SrcStr, bytes], None]) -> None:
         self._cb = cb
 
+    def reply_to(self, peer_id: str, frame: bytes) -> bool:
+        """
+        Try to send directly back to the peer using the ROUTER routing-id
+        we observed on the incoming request. Returns True if used, False otherwise.
+        """
+        rid = self._router_id_by_peer.get(peer_id)
+        if rid is None:
+            return False
+        with self._send_lock:
+            self._router.send_multipart([rid, frame])
+        return True
+
     def send(self, dest: DestStr, frame: bytes) -> None:
         """
         dest:
-          - "peer:<peer_id>"     -> send direct to that peer via DEALER
-          - "broadcast:*"        -> send to all known peers (fire-and-forget)
+        - "peer:<peer_id>"  or  "<peer_id>"  -> direct to that peer
+        - "broadcast:*"                      -> to all known peers
         """
-        if dest.startswith("peer:"):
-            peer_id = dest.split(":", 1)[1]
-            endpoint = self._book.get(peer_id)
-            if not endpoint:
-                return  # unknown peer_id; drop silently to match bamboo no-NACK
+        # 1) broadcast
+        if dest.startswith("broadcast:"):
+            with self._send_lock:
+                for _peer_id, _endpoint in self._book.items():
+                    dealer = self._dealers.get(_peer_id)
+                    if dealer is None:
+                        dealer = self._new_dealer(_peer_id, _endpoint)
+                        self._dealers[_peer_id] = dealer
+                    dealer.send(frame)
+            return
+
+        # 2) normalize to plain id
+        peer_id = dest.split(":", 1)[1] if dest.startswith("peer:") else dest
+
+        # 3) preferred path: DEALER via address_book
+        endpoint = self._book.get(peer_id)
+        if endpoint:
             dealer = self._dealers.get(peer_id)
             if dealer is None:
                 dealer = self._new_dealer(peer_id, endpoint)
@@ -96,14 +121,18 @@ class ZmqTransport(Transport):
                 dealer.send(frame)
             return
 
-        if dest.startswith("broadcast:"):
-            with self._send_lock:
-                for peer_id, endpoint in self._book.items():
-                    dealer = self._dealers.get(peer_id)
-                    if dealer is None:
-                        dealer = self._new_dealer(peer_id, endpoint)
-                        self._dealers[peer_id] = dealer
-                    dealer.send(frame)
+        # 4) fallback: reply via ROUTER if we cached this peer's routing-id
+        rid_map = getattr(self, "_router_id_by_peer", None)
+        if rid_map is not None:
+            rid = rid_map.get(peer_id)
+            if rid is not None:
+                with self._send_lock:
+                    self._router.send_multipart([rid, frame])
+                return
+
+        # 5) unknown route -> drop silently (matches bamboo no-NACK semantics)
+        return
+
 
     def add_peer(self, peer_id: str, endpoint: str) -> None:
         """Dynamically add or update an endpoint for a peer."""
@@ -150,6 +179,7 @@ class ZmqTransport(Transport):
                 except Exception:
                     src_peer = "unknown"
 
+                self._router_id_by_peer[src_peer] = ident
                 if self._cb:
                     # Pass the *remote* peer id as the source
                     self._cb(f"peer:{src_peer}", payload)
