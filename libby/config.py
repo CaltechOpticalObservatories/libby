@@ -7,15 +7,15 @@ try:
 except Exception:
     yaml = None
 
-def _load_json(p: pathlib.Path) -> Dict[str, Any]:
-    return json.loads(p.read_text())
+def _load_json_section(path: pathlib.Path, section: str) -> Dict[str, Any]:
+    cfg = json.loads(path.read_text()) or {}
+    return cfg.get(section, {})
 
-def _load_yaml(p: pathlib.Path) -> Dict[str, Any]:
-    if yaml is None:
-        raise RuntimeError("YAML requested but PyYAML not installed. `pip install pyyaml`")
-    return yaml.safe_load(p.read_text()) or {}
+def _load_yaml_section(path: pathlib.Path, section: str) -> dict:
+    cfg = yaml.safe_load(path.read_text()) or {}
+    return cfg.get(section, {})
 
-def load_config(path: str | os.PathLike[str]) -> Dict[str, Any]:
+def load_config(path: str | os.PathLike[str], section: str) -> Dict[str, Any]:
     """
     Load config from .json or .yml/.yaml.
     If the extension is missing/unknown, attempt JSON → YAML.
@@ -25,13 +25,13 @@ def load_config(path: str | os.PathLike[str]) -> Dict[str, Any]:
         raise FileNotFoundError(f"Config file not found: {p}")
     ext = p.suffix.lower()
     if ext == ".json":
-        return _load_json(p) or {}
+        return _load_json_section(p, section) or {}
     if ext in (".yml", ".yaml"):
-        return _load_yaml(p) or {}
+        return _load_yaml_section(p, section) or {}
     # Auto-detect
-    for fn in (_load_json, _load_yaml):
+    for fn in (_load_json_section, _load_yaml_section):
         try:
-            return fn(p) or {}
+            return fn(p, section) or {}
         except Exception:
             pass
     raise ValueError(f"Could not parse config file as JSON or YAML: {p}")
