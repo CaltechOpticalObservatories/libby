@@ -48,6 +48,7 @@ class LibbyDaemon:
     transport: str = "zmq"
     rabbitmq_url: Optional[str] = None
     group_id: Optional[str] = None
+    daemon_desc: Optional[str] = None
     # internal config
     _config: Dict[str, Any] = {}
 
@@ -106,6 +107,8 @@ class LibbyDaemon:
             d.rabbitmq_url = str(cfg["rabbitmq_url"])
         if "group_id" in cfg:
             d.group_id = str(cfg["group_id"])
+        if "daemon_desc" in cfg:
+            d.daemon_desc = str(cfg["daemon_desc"])
 
         return d
 
