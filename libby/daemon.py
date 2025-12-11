@@ -48,8 +48,13 @@ class LibbyDaemon:
     transport: str = "zmq"
     rabbitmq_url: Optional[str] = None
     group_id: Optional[str] = None
+    daemon_desc: Optional[str] = None
     # internal config
     _config: Dict[str, Any] = {}
+
+    # optional communication details to hardware
+    host: Optional[str] = None
+    port: Optional[int] = None
 
     # payload-only handlers
     services: Dict[str, RPCHandler] = {}
@@ -82,13 +87,42 @@ class LibbyDaemon:
         d._config = dict(cfg)
 
         # map expected fields if provided
-        if "peer_id" in cfg: d.peer_id = cfg["peer_id"]
-        if "bind" in cfg: d.bind = cfg["bind"]
-        if "address_book" in cfg: d.address_book = cfg["address_book"]
-        if "discovery_enabled" in cfg: d.discovery_enabled = bool(cfg["discovery_enabled"])
-        if "discovery_interval_s" in cfg: d.discovery_interval_s = float(cfg["discovery_interval_s"])
+        if "peer_id" in cfg:
+            d.peer_id = cfg["peer_id"]
+        if "bind" in cfg:
+            d.bind = cfg["bind"]
+        if "address_book" in cfg:
+            d.address_book = cfg["address_book"]
+        if "discovery_enabled" in cfg:
+            d.discovery_enabled = bool(cfg["discovery_enabled"])
+        if "discovery_interval_s" in cfg:
+            d.discovery_interval_s = float(cfg["discovery_interval_s"])
+        if "host" in cfg:
+            d.host = cfg["host"]
+        if "port" in cfg:
+            d.port = int(cfg["port"])
+        if "transport" in cfg:
+            d.transport = str(cfg["transport"])
+        if "rabbitmq_url" in cfg:
+            d.rabbitmq_url = str(cfg["rabbitmq_url"])
+        if "group_id" in cfg:
+            d.group_id = str(cfg["group_id"])
+        if "daemon_desc" in cfg:
+            d.daemon_desc = str(cfg["daemon_desc"])
 
         return d
+
+    @classmethod
+    def load_config_section(cls, path: str, section: str, *, env_prefix: str = "LIBBY_") -> "LibbyDaemon":
+        """
+        Build a dict from a config file and extract a specific section for the daemon.
+        """
+        cfg = with_env_overrides(load_config(path), prefix=env_prefix)
+        if section not in cfg or not isinstance(cfg[section], dict):
+            raise ValueError(f"Config section '{section}' missing or not a dict in {path}")
+        if "communication" in section:
+            return cls.from_config(cfg[section])
+        return cfg[section]
 
     # optional hooks
     def on_start(self, libby: Libby) -> None: ...
