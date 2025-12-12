@@ -1,13 +1,18 @@
-peer_id: "peer.echo.01"
-bind: "tcp://*:5555"
+peer_id: "peer-D"
+bind: "tcp://*:5558"
 
 # or fill with known peers
-address_book: {}          
+address_book:
+  peer-B: tcp://127.0.0.1:5556      
 
 # Optional discovery
 discovery_enabled: true
 discovery_interval_s: 3.0
 
 # Declare exactly what this peer exposes/listens to:
-services: ["ping", "echo"]
-topics: ["sys.hello", "sys.events"]
+services:
+  - ping
+  - echo
+
+topics:
+  - alerts.status
