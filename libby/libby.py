@@ -54,6 +54,7 @@ class Libby:
         discover: bool = False,
         discover_interval_s: float = 5.0,
         hello_on_start: bool = True,
+        group_id: Optional[str] = None,
     ) -> "Libby":
         try:
             from .zmq_transport import ZmqTransport
@@ -64,7 +65,7 @@ class Libby:
                 "or provide your own Transport implementation."
             ) from e
 
-        t = ZmqTransport(bind_router=bind, address_book=address_book, my_id=self_id)
+        t = ZmqTransport(bind_router=bind, address_book=address_book, my_id=self_id, group_id=group_id)
         t.start()
         return cls(
             self_id=self_id,
@@ -83,6 +84,7 @@ class Libby:
         rabbitmq_url: str = "amqp://localhost",
         keys: Optional[List[str]] = None,
         callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
+        group_id: Optional[str] = None,
     ) -> "Libby":
         """
         Create a Libby instance using RabbitMQ transport.
@@ -92,6 +94,7 @@ class Libby:
             rabbitmq_url: RabbitMQ connection URL (default: "amqp://localhost")
             keys: List of RPC keys this peer will serve
             callback: Default callback for RPC requests
+            group_id: Optional group identifier
 
         Returns:
             Configured Libby instance
@@ -100,7 +103,8 @@ class Libby:
             >>> libby = Libby.rabbitmq(
             ...     self_id="peer-A",
             ...     rabbitmq_url="amqp://user:pass@localhost:5672/",
-            ...     keys=["echo"]
+            ...     keys=["echo"],
+            ...     group_id="hsfei"
             ... )
         """
         try:
@@ -113,7 +117,7 @@ class Libby:
                 "  pip install pika"
             ) from e
 
-        t = RabbitMQTransport(peer_id=self_id, rabbitmq_url=rabbitmq_url)
+        t = RabbitMQTransport(peer_id=self_id, rabbitmq_url=rabbitmq_url, group_id=group_id)
         t.start()
         return cls(
             self_id=self_id,
