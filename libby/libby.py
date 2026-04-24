@@ -1,10 +1,12 @@
 from __future__ import annotations
-from typing import Callable, Dict, List, Optional, Any
+from typing import Any, Callable, Dict, Iterable, List, Optional
 import time
 
 from bamboo.keys import KeyRegistry
 from bamboo.protocol import Protocol
 from bamboo.discovery import Discovery
+
+from .keyword import Keyword, match_pattern
 
 class Libby:
     def __init__(
@@ -41,6 +43,10 @@ class Libby:
                     except AttributeError:
                         pass
             self._disco.start()
+
+        self._keywords: Dict[str, Keyword] = {}
+        self.serve_keys(["keys.list"], self._keys_list)
+        self.serve_keys(["keys.describe"], self._keys_describe)
 
     @classmethod
     def zmq(
@@ -158,6 +164,45 @@ class Libby:
     def serve_keys(self, keys: List[str], callback: Callable[[dict, dict], Optional[dict]]) -> None:
         for k in keys:
             self.proto.serve(k, callback)
+
+    def register_keyword(self, keyword: Keyword) -> None:
+        if keyword.name in self._keywords:
+            raise ValueError(f"keyword '{keyword.name}' already registered")
+        self._keywords[keyword.name] = keyword
+        self.serve_keys([keyword.name], self._keyword_dispatcher)
+
+    def register_keywords(self, keywords: Iterable[Keyword]) -> None:
+        keywords = list(keywords)
+        for keyword in keywords:
+            if keyword.name in self._keywords:
+                raise ValueError(f"keyword '{keyword.name}' already registered")
+            self._keywords[keyword.name] = keyword
+        if keywords:
+            self.serve_keys([k.name for k in keywords], self._keyword_dispatcher)
+
+    def _keyword_dispatcher(self, payload: dict, ctx: dict) -> dict:
+        keyword = self._keywords.get(ctx.get("key", ""))
+        if keyword is None:
+            return {"ok": False, "error": f"unknown keyword '{ctx.get('key', '')}'"}
+        try:
+            return keyword.handle(payload)
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def _keys_list(self, payload: dict, _ctx: dict) -> dict:
+        pattern = payload.get("pattern", "%")
+        if not isinstance(pattern, str):
+            return {"ok": False, "error": "pattern must be a string"}
+        return {"ok": True, "matches": match_pattern(pattern, self._keywords)}
+
+    def _keys_describe(self, payload: dict, _ctx: dict) -> dict:
+        name = payload.get("name")
+        if not isinstance(name, str) or not name:
+            return {"ok": False, "error": "name must be a non-empty string"}
+        keyword = self._keywords.get(name)
+        if keyword is None:
+            return {"ok": False, "error": f"unknown keyword '{name}'"}
+        return {"ok": True, **keyword.describe()}
 
     def listen(self, topic: str, handler: Callable[[Any], None]) -> None:
         self.proto.listen(topic, handler)
