@@ -53,3 +53,49 @@ To install any optional dependencies, such as development dependencies, use:
 ```bash
 pip install -e .[dev]
 ```
+
+## Keywords
+
+A **keyword** is a typed named value served over libby, with a uniform payload convention:
+
+- `{}` → show (return current value)
+- `{"value": V}` → modify (apply, then return it)
+
+Types: `BoolKeyword`, `IntKeyword`, `FloatKeyword`, `StringKeyword`,
+`TriggerKeyword`. Access mode is inferred — pass a `getter` for
+read-only, a `setter` for write-only, both for read-write. Optional
+extras: `units`, `description`, `nullable`, `validator`.
+
+```python
+from libby import Libby, BoolKeyword, FloatKeyword, TriggerKeyword
+
+libby = Libby.rabbitmq(self_id="my-peer", rabbitmq_url="amqp://localhost")
+
+state = {"position": 0.0}
+libby.register_keywords([
+    BoolKeyword("online", getter=lambda: True),
+    FloatKeyword("position",
+                 getter=lambda: state["position"],
+                 setter=lambda v: state.update(position=v),
+                 units="mm"),
+    TriggerKeyword("halt", action=lambda: print("halted")),
+])
+```
+
+Clients call the keyword by name:
+
+```python
+client = Libby.rabbitmq(self_id="client", rabbitmq_url="amqp://localhost")
+
+client.rpc("my-peer", "position", {})               # show
+client.rpc("my-peer", "position", {"value": 12.5})  # modify
+client.rpc("my-peer", "halt", {"value": 1})         # fire
+```
+
+Two meta-services are auto-registered on every peer that uses the
+keyword registry:
+
+- `keys.list` — payload `{"pattern": "..."}` (default `"%"`) → names,
+  sorted. `%` wildcards within a single name.
+- `keys.describe` — payload `{"name": "..."}` → flat metadata dict.
+  Exact lookup; no wildcards.
