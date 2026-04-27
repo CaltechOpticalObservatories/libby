@@ -66,21 +66,29 @@ Types: `BoolKeyword`, `IntKeyword`, `FloatKeyword`, `StringKeyword`,
 read-only, a `setter` for write-only, both for read-write. Optional
 extras: `units`, `description`, `nullable`, `validator`.
 
+Each `Libby` peer carries a `keyword_registry` with typed builder
+methods. Build keywords by calling `lib.keyword_registry.<type>(...)`,
+then flush them to the peer with `register_keywords`:
+
 ```python
-from libby import Libby, BoolKeyword, FloatKeyword, TriggerKeyword
+from libby import Libby
 
 libby = Libby.rabbitmq(self_id="my-peer", rabbitmq_url="amqp://localhost")
 
 state = {"position": 0.0}
-libby.register_keywords([
-    BoolKeyword("online", getter=lambda: True),
-    FloatKeyword("position",
-                 getter=lambda: state["position"],
-                 setter=lambda v: state.update(position=v),
-                 units="mm"),
-    TriggerKeyword("halt", action=lambda: print("halted")),
-])
+libby.keyword_registry.bool("online", getter=lambda: True)
+libby.keyword_registry.float("position",
+                             getter=lambda: state["position"],
+                             setter=lambda v: state.update(position=v),
+                             units="mm")
+libby.keyword_registry.trigger("halt", action=lambda: print("halted"))
+
+libby.register_keywords(libby.keyword_registry.drain())
 ```
+
+You can also build keywords directly via `BoolKeyword(...)` /
+`FloatKeyword(...)` etc. and pass a list to `register_keywords`. The
+registry is a convenience layer over the same type classes.
 
 Clients call the keyword by name:
 

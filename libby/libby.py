@@ -7,6 +7,7 @@ from bamboo.protocol import Protocol
 from bamboo.discovery import Discovery
 
 from .keyword import Keyword, match_pattern
+from .keyword_registry import KeywordRegistry
 
 class Libby:
     def __init__(
@@ -45,6 +46,7 @@ class Libby:
             self._disco.start()
 
         self._keywords: Dict[str, Keyword] = {}
+        self.keyword_registry = KeywordRegistry()
         self.serve_keys(["keys.list"], self._keys_list)
         self.serve_keys(["keys.describe"], self._keys_describe)
 

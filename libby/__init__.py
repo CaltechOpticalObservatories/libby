@@ -11,6 +11,7 @@ from .keyword import (
     TriggerKeyword,
     match_pattern,
 )
+from .keyword_registry import KeywordRegistry
 
 __all__ = [
     "Libby",
@@ -23,5 +24,6 @@ __all__ = [
     "FloatKeyword",
     "StringKeyword",
     "TriggerKeyword",
+    "KeywordRegistry",
     "match_pattern",
 ]
