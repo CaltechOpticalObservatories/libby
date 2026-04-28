@@ -1,0 +1,15 @@
+# Example libby CLI config.
+#
+# Copy this to ~/.libby/cli_config.yaml and edit as needed:
+#   mkdir -p ~/.libby
+#   cp <libby_pkg>/cli/cli_config.example.yaml ~/.libby/cli_config.yaml
+#
+# All keys are optional. Built-in defaults match what's shown here.
+# Override per-call with --config / --transport / --rabbitmq-url flags.
+
+transport: rabbitmq
+rabbitmq_url: amqp://localhost
+
+# ZMQ address book (peer_id -> tcp://host:port). Only consulted when
+# transport=zmq. Leave empty for RabbitMQ deployments.
+peers: {}
