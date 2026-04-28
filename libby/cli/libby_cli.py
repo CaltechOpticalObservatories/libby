@@ -19,7 +19,6 @@ DEFAULT_RABBITMQ_URL = "amqp://localhost"
 DEFAULT_TRANSPORT = "rabbitmq"
 DEFAULT_CONFIG_PATH = Path.home() / ".libby" / "cli_config.yaml"
 DEFAULT_TIMEOUT_S = 3.0
-MOTION_TIMEOUT_S = 30.0
 
 
 def _load_config(path: Optional[str]) -> Dict[str, Any]:
@@ -215,6 +214,7 @@ def _emit_describe(qualified: str, resp: Dict[str, Any], *, as_json: bool) -> in
         ("writeonly",   resp.get("writeonly")),
         ("nullable",    resp.get("nullable")),
         ("units",       resp.get("units")),
+        ("timeout_s",   resp.get("timeout_s")),
         ("description", resp.get("description")),
     ]
     visible = [(k, v) for k, v in fields if v is not None and v != ""]
@@ -227,12 +227,22 @@ def _emit_describe(qualified: str, resp: Dict[str, Any], *, as_json: bool) -> in
     return 0
 
 
-def _default_timeout(verb: str, name: str) -> float:
-    """Bump timeout for motion modifies (positionvalue/positionnamed)."""
-    if verb == "modify" and (
-        name.startswith("positionvalue") or name.startswith("positionnamed")
-    ):
-        return MOTION_TIMEOUT_S
+def _modify_timeout(lib: Libby, peer: str, name: str, user_timeout: Optional[float]) -> float:
+    """Resolve the timeout for a modify call.
+
+    Precedence: ``--timeout`` flag → ``timeout_s`` from the keyword's
+    describe metadata → ``DEFAULT_TIMEOUT_S``.
+    """
+    if user_timeout is not None:
+        return user_timeout
+    try:
+        resp = _rpc_keys_describe(lib, peer, name, DEFAULT_TIMEOUT_S)
+        if resp.get("ok"):
+            t = resp.get("timeout_s")
+            if t is not None:
+                return float(t)
+    except Exception:
+        pass
     return DEFAULT_TIMEOUT_S
 
 
@@ -255,11 +265,7 @@ def cmd_show(namespace: argparse.Namespace) -> int:
     config = _load_config(namespace.config)
     group, scope, name = _parse_keyword(namespace.keyword, allow_pattern=True)
     peer = _peer_id(group, scope)
-    timeout = (
-        namespace.timeout
-        if namespace.timeout is not None
-        else _default_timeout("show", name)
-    )
+    timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
     qualified_arg = f"{group}.{scope}.{name}"
 
     lib: Optional[Libby] = None
@@ -378,16 +384,12 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
     group, scope, name = _parse_keyword(keyword_str)
     peer = _peer_id(group, scope)
     qualified = f"{group}.{scope}.{name}"
-    timeout = (
-        namespace.timeout
-        if namespace.timeout is not None
-        else _default_timeout("modify", name)
-    )
     value = _coerce_value(value_str)
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
+        timeout = _modify_timeout(lib, peer, name, namespace.timeout)
         result = lib.rpc(peer, name, {"value": value}, ttl_ms=int(timeout * 1000))
         resp = result.get("resp", result) if isinstance(result, dict) else {}
         return _emit_one(qualified, resp, as_json=namespace.json)
@@ -514,8 +516,8 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--self-id",
                        help=f"Local peer id (default: {DEFAULT_SELF_ID})")
         p.add_argument("--timeout", type=float,
-                       help=f"Timeout seconds (default: {DEFAULT_TIMEOUT_S}; "
-                            f"{MOTION_TIMEOUT_S} for motion modifies)")
+                       help=f"Timeout seconds (default: {DEFAULT_TIMEOUT_S}, "
+                            f"or the keyword's timeout_s metadata for modify)")
         p.add_argument("--json", action="store_true",
                        help="Emit JSON to stdout instead of the pretty text format")
 
