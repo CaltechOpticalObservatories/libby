@@ -38,11 +38,13 @@ class KeywordRegistry:
         description: str = "",
         nullable: bool = False,
         validator: Optional[Callable[[Any], Optional[str]]] = None,
+        timeout_s: Optional[float] = None,
     ) -> BoolKeyword:
         return self._add(BoolKeyword(
             name,
             getter=getter, setter=setter,
             description=description, nullable=nullable, validator=validator,
+            timeout_s=timeout_s,
         ))
 
     def int(
@@ -55,11 +57,13 @@ class KeywordRegistry:
         description: str = "",
         nullable: bool = False,
         validator: Optional[Callable[[Any], Optional[str]]] = None,
+        timeout_s: Optional[float] = None,
     ) -> IntKeyword:
         return self._add(IntKeyword(
             name,
             getter=getter, setter=setter, units=units,
             description=description, nullable=nullable, validator=validator,
+            timeout_s=timeout_s,
         ))
 
     def float(
@@ -72,11 +76,13 @@ class KeywordRegistry:
         description: str = "",
         nullable: bool = False,
         validator: Optional[Callable[[Any], Optional[str]]] = None,
+        timeout_s: Optional[float] = None,
     ) -> FloatKeyword:
         return self._add(FloatKeyword(
             name,
             getter=getter, setter=setter, units=units,
             description=description, nullable=nullable, validator=validator,
+            timeout_s=timeout_s,
         ))
 
     def string(
@@ -88,11 +94,13 @@ class KeywordRegistry:
         description: str = "",
         nullable: bool = False,
         validator: Optional[Callable[[Any], Optional[str]]] = None,
+        timeout_s: Optional[float] = None,
     ) -> StringKeyword:
         return self._add(StringKeyword(
             name,
             getter=getter, setter=setter,
             description=description, nullable=nullable, validator=validator,
+            timeout_s=timeout_s,
         ))
 
     def trigger(
@@ -101,8 +109,11 @@ class KeywordRegistry:
         *,
         action: Callable[[], None],
         description: str = "",
+        timeout_s: Optional[float] = None,
     ) -> TriggerKeyword:
-        return self._add(TriggerKeyword(name, action=action, description=description))
+        return self._add(TriggerKeyword(
+            name, action=action, description=description, timeout_s=timeout_s,
+        ))
 
     def add(self, keyword: Keyword) -> Keyword:
         """Buffer a Keyword built directly (e.g. via a stage helper)."""
