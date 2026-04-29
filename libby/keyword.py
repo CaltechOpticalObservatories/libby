@@ -33,6 +33,7 @@ class Keyword:
         description: str = "",
         nullable: bool = False,
         validator: Optional[Validator] = None,
+        timeout_s: Optional[float] = None,
     ) -> None:
         if getter is None and setter is None:
             raise ValueError(
@@ -45,6 +46,7 @@ class Keyword:
         self.description = description
         self.nullable = nullable
         self._validator = validator
+        self.timeout_s = timeout_s
 
     @property
     def readonly(self) -> bool:
@@ -76,6 +78,8 @@ class Keyword:
             out["units"] = self.units
         if self.description:
             out["description"] = self.description
+        if self.timeout_s is not None:
+            out["timeout_s"] = self.timeout_s
         return out
 
     def handle(self, payload: dict) -> dict:
@@ -171,6 +175,7 @@ class TriggerKeyword(Keyword):
         *,
         action: Action,
         description: str = "",
+        timeout_s: Optional[float] = None,
     ) -> None:
         self.name = name
         self._action = action
@@ -180,6 +185,7 @@ class TriggerKeyword(Keyword):
         self.description = description
         self.nullable = False
         self._validator = None
+        self.timeout_s = timeout_s
 
     @property
     def readonly(self) -> bool:
