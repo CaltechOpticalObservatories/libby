@@ -17,6 +17,7 @@ authors = [
 dependencies = [
   "pyzmq>=25.0.0",
   "pika>=1.3.0",
+  "pyyaml>=6.0",
   "bamboo @ git+https://github.com/CaltechOpticalObservatories/bamboo.git@main"
 ]
 
@@ -30,5 +31,8 @@ where = ["."]
 include = ["libby", "libby.*"]
 exclude = ["peers*", "package*"]
 
+[tool.setuptools.package-data]
+"libby.cli" = ["*.yaml"]
+
 [project.scripts]
-lshow = "libby.cli.lshow:main"
+libby = "libby.cli.libby_cli:main"

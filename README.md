@@ -64,7 +64,9 @@ A **keyword** is a typed named value served over libby, with a uniform payload c
 Types: `BoolKeyword`, `IntKeyword`, `FloatKeyword`, `StringKeyword`,
 `TriggerKeyword`. Access mode is inferred — pass a `getter` for
 read-only, a `setter` for write-only, both for read-write. Optional
-extras: `units`, `description`, `nullable`, `validator`.
+extras: `units`, `description`, `nullable`, `validator`, `timeout_s`
+(advertised in `keys.describe`; the CLI uses it to extend the modify
+timeout for slow operations like motion).
 
 Each `Libby` peer carries a `keyword_registry` with typed builder
 methods. Build keywords by calling `lib.keyword_registry.<type>(...)`,
@@ -165,6 +167,9 @@ list of strings for `list`).
 - Empty (`key=`) and `null` clear nullable values.
 - Coercion is heuristic: `true` / `false` → bool, integer-looking →
   int, decimal-looking → float, else string.
+- The CLI consults `keys.describe` for the keyword's `timeout_s`
+  metadata before sending the modify, so slow operations (e.g. stage
+  motion) get a longer wait automatically. `--timeout <s>` overrides.
 
 ### Config
 
