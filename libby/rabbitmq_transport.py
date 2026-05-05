@@ -44,6 +44,9 @@ class RabbitMQTransport:
         # Receive connection created in background thread (not stored as instance vars)
         self._stop = threading.Event()
         self._rx_thread: Optional[threading.Thread] = None
+        # Pump heartbeats so an idle send connection doesn't get reset by the broker
+        self._hb_thread: Optional[threading.Thread] = None
+        self._hb_interval_s: float = 30.0
 
         # Setup exchanges and queue
         self._setup()
@@ -126,6 +129,12 @@ class RabbitMQTransport:
         self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
         self._rx_thread.start()
 
+        if self._hb_thread is None or not self._hb_thread.is_alive():
+            self._hb_thread = threading.Thread(
+                target=self._hb_loop, daemon=True, name="libby-rmq-hb"
+            )
+            self._hb_thread.start()
+
     def stop(self) -> None:
         """Stop consuming and close RabbitMQ connection."""
         self._stop.set()
@@ -133,6 +142,8 @@ class RabbitMQTransport:
         # Wait for receive thread to finish (it will cleanup its own connection)
         if self._rx_thread:
             self._rx_thread.join(timeout=2.0)
+        if self._hb_thread:
+            self._hb_thread.join(timeout=2.0)
 
         # Close send connection
         if self._send_channel and self._send_channel.is_open:
@@ -199,6 +210,17 @@ class RabbitMQTransport:
         except AMQPError:
             # Silently drop on error to match Bamboo's no-NACK policy
             pass
+
+    def _hb_loop(self) -> None:
+        """Drive heartbeats on the send connection during idle periods."""
+        while not self._stop.wait(timeout=self._hb_interval_s):
+            try:
+                with self._send_lock:
+                    conn = self._send_connection
+                    if conn is not None and conn.is_open:
+                        conn.process_data_events(time_limit=0)
+            except Exception:
+                pass
 
     def _rx_loop(self) -> None:
         """Message receive loop - runs in background thread with its own connection."""
