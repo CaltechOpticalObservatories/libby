@@ -15,23 +15,36 @@ def _load_yaml(p: pathlib.Path) -> Dict[str, Any]:
         raise RuntimeError("YAML requested but PyYAML not installed. `pip install pyyaml`")
     return yaml.safe_load(p.read_text()) or {}
 
-def load_config(path: str | os.PathLike[str]) -> Dict[str, Any]:
-    """
-    Load config from .json or .yml/.yaml.
-    If the extension is missing/unknown, attempt JSON → YAML.
+def load_config(path: str | os.PathLike[str], *, optional: bool = False) -> Dict[str, Any]:
+    """Load a JSON/YAML config file into a dict.
+
+    The single file→dict loader for libby; daemon and client config readers wrap
+    this with their own semantics. A missing file raises ``FileNotFoundError``
+    unless ``optional``, in which case ``{}`` is returned. The extension picks
+    the parser (.json vs .yml/.yaml); an unknown extension auto-detects JSON→YAML.
     """
     p = pathlib.Path(path)
     if not p.exists():
+        if optional:
+            return {}
         raise FileNotFoundError(f"Config file not found: {p}")
+    data = _parse(p)
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Config file {p} did not parse to a dict, got {type(data).__name__}"
+        )
+    return data
+
+
+def _parse(p: pathlib.Path) -> Any:
     ext = p.suffix.lower()
     if ext == ".json":
         return _load_json(p) or {}
     if ext in (".yml", ".yaml"):
         return _load_yaml(p) or {}
-    # Auto-detect
-    for fn in (_load_json, _load_yaml):
+    for parser in (_load_json, _load_yaml):
         try:
-            return fn(p) or {}
+            return parser(p) or {}
         except Exception:
             pass
     raise ValueError(f"Could not parse config file as JSON or YAML: {p}")

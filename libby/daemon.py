@@ -4,6 +4,7 @@ from dataclasses import is_dataclass, asdict
 import collections.abc as cabc
 import signal, sys, threading, time
 from typing import Any, Callable, Dict, List, Optional
+from .config import load_config
 from .libby import Libby
 
 Payload = Dict[str, Any]
@@ -78,24 +79,8 @@ class LibbyDaemon:
 
     @classmethod
     def from_config_file(cls, path: str) -> "LibbyDaemon":
-        import os, json
-        try:
-            import yaml  # type: ignore
-        except Exception:
-            yaml = None
-
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read()
-
-        if path.endswith((".yml", ".yaml")) and yaml is not None:
-            cfg = yaml.safe_load(text) or {}
-        else:
-            cfg = json.loads(text or "{}")
-
-        if not isinstance(cfg, dict):
-            raise ValueError(f"Config file {path} did not parse to a dict.")
-
-        return cls.from_config(cfg)
+        # Daemon config is required, load_config raises if the file is missing
+        return cls.from_config(load_config(path))
 
     # optional hooks
     def on_start(self, libby: Libby) -> None: ...
