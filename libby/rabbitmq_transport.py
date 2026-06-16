@@ -37,7 +37,7 @@ class RabbitMQTransport:
         self._cb: Optional[Callable[[SrcStr, bytes], None]] = None
 
         # Send connection (used in main thread)
-        self._send_connection: Optional[pika.BlockingConnection] = None
+        self._send_connection: Optional[pika.adapters.asyncio_connection.AsyncioConnection] = None
         self._send_channel: Optional[pika.channel.Channel] = None
         self._send_lock = threading.Lock()
 
@@ -57,14 +57,35 @@ class RabbitMQTransport:
             # Create send connection
             params = pika.URLParameters(self._url)
             params.heartbeat = 600  # 10 minute heartbeat
-            self._send_connection = pika.BlockingConnection(params)
-            self._send_channel = self._send_connection.channel()
-
-            # Setup exchanges and queue on this channel
-            self._setup_topology(self._send_channel)
+            on_open_callback = self._on_send_connection_open
+            on_error_callback = self._on_connection_error
+            on_closed_callback = self._on_connection_closed
+            self._send_connection = pika.adapters.asyncio_connection.AsyncioConnection(
+                params,
+                on_open_callback,
+                on_error_callback,
+                on_closed_callback
+            )
 
         except AMQPError as e:
             raise RuntimeError(f"Failed to setup RabbitMQ transport: {e}")
+
+    def _on_connection_error(self, connection, error):
+        # Pass the connection handshake error back up to your start function
+        if not self._setup_future.done():
+            self._setup_future.set_exception(
+                RuntimeError(f"Failed to open RabbitMQ connection: {error}")
+            )
+
+    def _on_connection_closed(self, connection, reason):
+        print(f"[PeerA] Connection closed: {reason}")
+
+    def _on_send_connection_open(self, connection):
+        """Callback when the send connection is opened."""
+        self._send_channel = connection.channel()
+
+        # Setup exchanges and queue on this channel
+        self._setup_topology(self._send_channel)
 
     def _build_queue_name(self) -> str:
         """Build queue name, including group_id if provided."""
@@ -249,7 +270,7 @@ class RabbitMQTransport:
             # Create separate receive connection (not shared with send thread)
             params = pika.URLParameters(self._url)
             params.heartbeat = 600
-            recv_conn = pika.BlockingConnection(params)
+            recv_conn = pika.adapters.asyncio_connection.AsyncioConnection(params)
             recv_ch = recv_conn.channel()
 
             # Ensure topology is set up on this channel
@@ -277,7 +298,7 @@ class RabbitMQTransport:
                             recv_conn.close()
 
                         # Reconnect
-                        recv_conn = pika.BlockingConnection(params)
+                        recv_conn = pika.adapters.asyncio_connection.AsyncioConnection(params)
                         recv_ch = recv_conn.channel()
 
                         # Re-declare exchanges, queue, and bindings (idempotent)
