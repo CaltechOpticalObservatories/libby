@@ -91,7 +91,6 @@ class LibbyDaemon:
 
     def config_peer_id(self) -> str: return self.peer_id or self._must("peer_id")
     def config_bind(self) -> str: return self.bind or self._must("bind")
-    def config_address_book(self) -> Dict[str, str]: return self.address_book or self._must("address_book")
     def config_rabbitmq_url(self) -> str: return self.rabbitmq_url or "amqp://localhost"
     def config_group_id(self) -> Optional[str]: return self.group_id
     def config_address_book(self) -> Dict[str, str]: return self.address_book if self.address_book is not None else {}
