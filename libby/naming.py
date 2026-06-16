@@ -29,7 +29,7 @@ def parse_keyword(arg: str, *, allow_pattern: bool = False) -> Tuple[str, str, s
 
 def peer_id(group: str, scope: str) -> str:
     """Map a keyword's group/scope to the daemon peer id."""
-    return f"{group}_{scope}"
+    return f"{group}.{scope}"
 
 
 def coerce_value(value: str) -> Any:
