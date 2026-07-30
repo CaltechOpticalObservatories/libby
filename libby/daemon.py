@@ -368,6 +368,7 @@ class LibbyDaemon:
                 self.logger.exception("daemon initialization failed")
                 if self.fail_fast_on_start:
                     self._close_libby()
+                    self._started = False
                     raise
 
             self._flush_keywords()
