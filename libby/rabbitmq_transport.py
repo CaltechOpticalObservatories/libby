@@ -60,8 +60,9 @@ class RabbitMQTransport:
             self._send_connection = pika.BlockingConnection(params)
             self._send_channel = self._send_connection.channel()
 
-            # Setup exchanges and queue on this channel
-            self._setup_topology(self._send_channel)
+            # The send connection only publishes; it doesn't need its own
+            # queue, so it just makes sure the exchanges exist.
+            self._setup_topology(self._send_channel, declare_queue=False)
 
         except AMQPError as e:
             raise RuntimeError(f"Failed to setup RabbitMQ transport: {e}")
@@ -72,9 +73,16 @@ class RabbitMQTransport:
             return f"libby.group.{self._group_id}.peer.{self._peer_id}"
         return f"libby.peer.{self._peer_id}"
 
-    def _setup_topology(self, channel) -> None:
+    def _setup_topology(self, channel, *, declare_queue: bool) -> None:
         """
-        Declare exchanges, queue, and bindings on a given channel.
+        Declare exchanges on a given channel, and this peer's queue and
+        bindings if `declare_queue` is set.
+
+        The queue is exclusive to the connection that declares it, since a
+        transient, non-exclusive queue is a deprecated RabbitMQ combination
+        (removed outright in newer broker versions). Only the receive
+        connection consumes from it, so only that connection should declare
+        it; the send connection only needs the exchanges to exist.
         """
         # Declare exchanges
         channel.exchange_declare(
@@ -90,11 +98,14 @@ class RabbitMQTransport:
             durable=False
         )
 
-        # Create this peer's queue
+        if not declare_queue:
+            return
+
+        # Create this peer's queue, exclusive to this (receive) connection
         channel.queue_declare(
             queue=self._queue_name,
             durable=False,
-            auto_delete=True
+            exclusive=True
         )
 
         # Bind queue to direct exchange with peer_id as routing key
@@ -253,7 +264,7 @@ class RabbitMQTransport:
             recv_ch = recv_conn.channel()
 
             # Ensure topology is set up on this channel
-            self._setup_topology(recv_ch)
+            self._setup_topology(recv_ch, declare_queue=True)
 
             # Start consuming
             recv_ch.basic_consume(
@@ -281,7 +292,7 @@ class RabbitMQTransport:
                         recv_ch = recv_conn.channel()
 
                         # Re-declare exchanges, queue, and bindings (idempotent)
-                        self._setup_topology(recv_ch)
+                        self._setup_topology(recv_ch, declare_queue=True)
 
                         recv_ch.basic_consume(
                             queue=self._queue_name,
