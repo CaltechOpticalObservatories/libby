@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import yaml
 
 from libby.libby import Libby
+from libby.naming import qualified_peer_id
 
 DEFAULT_SELF_ID = "cli"
 DEFAULT_BIND = "tcp://127.0.0.1:56001"
@@ -108,7 +109,7 @@ def _parse_keyword(arg: str, *, allow_pattern: bool = False) -> Tuple[str, str, 
 
 
 def _peer_id(group: str, scope: str) -> str:
-    return f"{group}_{scope}"
+    return qualified_peer_id(scope, group)
 
 
 def _coerce_value(value: str) -> Any:
