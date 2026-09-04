@@ -189,9 +189,13 @@ Schema:
 transport: rabbitmq          # zmq | rabbitmq
 rabbitmq_url: amqp://localhost
 
-# Used only when transport=zmq:
+# Used only when transport=zmq. A bare endpoint string is also accepted
+# (group_id defaults to None); group_id lets Libby.find_peer confirm a
+# peer belongs to the group it claims to.
 peers:
-  hsfei_pickoff: tcp://hispec.caltech.edu:5555
+  hsfei_pickoff:
+    endpoint: tcp://hispec.caltech.edu:5555
+    group_id: hsfei
 ```
 
 All keys are optional. Missing file is fine — defaults are

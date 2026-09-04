@@ -10,6 +10,11 @@
 transport: rabbitmq
 rabbitmq_url: amqp://localhost
 
-# ZMQ address book (peer_id -> tcp://host:port). Only consulted when
-# transport=zmq. Leave empty for RabbitMQ deployments.
+# ZMQ address book. Only consulted when transport=zmq; leave empty for
+# RabbitMQ deployments. Each entry is peer_id: {endpoint, group_id} (a bare
+# endpoint string is also accepted, with group_id defaulting to None), e.g.:
+#   peers:
+#     hsfei_pickoff:
+#       endpoint: tcp://hispec.caltech.edu:5555
+#       group_id: hsfei
 peers: {}

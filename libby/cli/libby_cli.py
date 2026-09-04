@@ -47,12 +47,22 @@ def _resolve_rabbitmq_url(namespace: argparse.Namespace, config: Dict[str, Any])
     return namespace.rabbitmq_url or config.get("rabbitmq_url") or DEFAULT_RABBITMQ_URL
 
 
-def _resolve_address_book(namespace: argparse.Namespace, config: Dict[str, Any]) -> Dict[str, str]:
-    book: Dict[str, str] = dict(config.get("peers") or {})
+def _resolve_address_book(namespace: argparse.Namespace, config: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    book: Dict[str, Dict[str, Any]] = {
+        peer: _normalize_addr_entry(entry)
+        for peer, entry in (config.get("peers") or {}).items()
+    }
     for kv in (namespace.addr or []):
         peer, address = _parse_addr_kv(kv)
-        book[peer] = address
+        book[peer] = {"endpoint": address, "group_id": None}
     return book
+
+
+def _normalize_addr_entry(entry: Any) -> Dict[str, Any]:
+    """Accept a bare endpoint string (legacy) or {endpoint, group_id}."""
+    if isinstance(entry, str):
+        return {"endpoint": entry, "group_id": None}
+    return {"endpoint": entry["endpoint"], "group_id": entry.get("group_id")}
 
 
 def _parse_addr_kv(kv: str) -> Tuple[str, str]:
