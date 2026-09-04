@@ -6,136 +6,45 @@ import json
 import signal
 import sys
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import yaml
-
+from libby.config_resolve import (
+    DEFAULT_BIND,
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_RABBITMQ_URL,
+    load_cli_config,
+    resolve_address_book,
+    resolve_rabbitmq_url,
+    resolve_transport,
+)
+from libby.errors import KeywordError, LibbyError
 from libby.libby import Libby
-from libby.naming import qualified_peer_id
+from libby.naming import coerce_value, parse_keyword, peer_id
+from libby.response import unwrap
 
 DEFAULT_SELF_ID = "cli"
-DEFAULT_BIND = "tcp://127.0.0.1:56001"
-DEFAULT_RABBITMQ_URL = "amqp://localhost"
-DEFAULT_TRANSPORT = "rabbitmq"
-DEFAULT_CONFIG_PATH = Path.home() / ".libby" / "cli_config.yaml"
 DEFAULT_TIMEOUT_S = 3.0
 
 
-def _load_config(path: Optional[str]) -> Dict[str, Any]:
-    """Load cli_config.yaml. Missing file → empty dict."""
-    p = Path(path) if path else DEFAULT_CONFIG_PATH
-    if not p.exists():
-        return {}
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except Exception as ex:
-        raise SystemExit(f"libby: failed to load {p}: {ex}")
-    if not isinstance(data, dict):
-        raise SystemExit(f"libby: {p} must parse to a dict, got {type(data).__name__}")
-    return data
-
-
-def _resolve_transport(namespace: argparse.Namespace, config: Dict[str, Any]) -> str:
-    transport = namespace.transport or config.get("transport") or DEFAULT_TRANSPORT
-    if transport not in ("zmq", "rabbitmq"):
-        raise SystemExit(f"libby: invalid transport: {transport}")
-    return transport
-
-
-def _resolve_rabbitmq_url(namespace: argparse.Namespace, config: Dict[str, Any]) -> str:
-    return namespace.rabbitmq_url or config.get("rabbitmq_url") or DEFAULT_RABBITMQ_URL
-
-
-def _resolve_address_book(namespace: argparse.Namespace, config: Dict[str, Any]) -> Dict[str, str]:
-    book: Dict[str, str] = dict(config.get("peers") or {})
-    for kv in (namespace.addr or []):
-        peer, address = _parse_addr_kv(kv)
-        book[peer] = address
-    return book
-
-
-def _parse_addr_kv(kv: str) -> Tuple[str, str]:
-    if "=" not in kv:
-        raise argparse.ArgumentTypeError("Expected 'peer_id=tcp://host:port'")
-    peer, address = kv.split("=", 1)
-    peer, address = peer.strip(), address.strip()
-    if not peer or not address:
-        raise argparse.ArgumentTypeError("Expected 'peer_id=tcp://host:port'")
-    return peer, address
-
-
 def _mk_libby(namespace: argparse.Namespace, config: Dict[str, Any]) -> Libby:
-    transport = _resolve_transport(namespace, config)
+    transport = resolve_transport(namespace.transport, config)
     self_id = namespace.self_id or DEFAULT_SELF_ID
     if transport == "rabbitmq":
         return Libby.rabbitmq(
             self_id=self_id,
-            rabbitmq_url=_resolve_rabbitmq_url(namespace, config),
+            rabbitmq_url=resolve_rabbitmq_url(namespace.rabbitmq_url, config),
             keys=[],
         )
     return Libby.zmq(
         self_id=self_id,
         bind=namespace.bind or DEFAULT_BIND,
-        address_book=_resolve_address_book(namespace, config),
+        address_book=resolve_address_book(config, namespace.addr),
         keys=[],
         callback=None,
         discover=True,
         discover_interval_s=2.0,
         hello_on_start=True,
     )
-
-
-def _parse_keyword(arg: str, *, allow_pattern: bool = False) -> Tuple[str, str, str]:
-    """Parse '<group>.<scope>.<name>' into (group, scope, name).
-
-    With ``allow_pattern=True``, ``%`` is allowed in the name segment.
-    Group and scope must always be explicit.
-    """
-    parts = arg.split(".", 2)
-    if len(parts) < 3 or not all(parts):
-        raise SystemExit(f"libby: keyword must be <group>.<scope>.<name>, got: {arg}")
-    group, scope, name = parts
-    if "%" in group or "%" in scope:
-        raise SystemExit(
-            f"libby: wildcards (%) are not allowed in <group> or <scope>: {arg}"
-        )
-    if "%" in name and not allow_pattern:
-        raise SystemExit(
-            f"libby: this verb requires an exact keyword name (no %): {arg}"
-        )
-    return group, scope, name
-
-
-def _peer_id(group: str, scope: str) -> str:
-    return qualified_peer_id(scope, group)
-
-
-def _coerce_value(value: str) -> Any:
-    """Coerce a modify value string.
-
-    Empty / 'null' → None; 'true'/'false' → bool; parseable as int → int;
-    parseable as float → float; otherwise the original string.
-    """
-    if value == "":
-        return None
-    low = value.strip().lower()
-    if low == "null":
-        return None
-    if low == "true":
-        return True
-    if low == "false":
-        return False
-    try:
-        return int(value)
-    except ValueError:
-        pass
-    try:
-        return float(value)
-    except ValueError:
-        pass
-    return value
 
 
 def _emit_one(qualified: str, resp: Dict[str, Any], *, as_json: bool) -> int:
@@ -247,25 +156,33 @@ def _modify_timeout(lib: Libby, peer: str, name: str, user_timeout: Optional[flo
     return DEFAULT_TIMEOUT_S
 
 
+def _peel(envelope: Any) -> Dict[str, Any]:
+    """Non-raising unwrap for the renderer: failures become an
+    ``{"ok": False, "error": ...}`` dict so a table can show them inline."""
+    try:
+        return unwrap("", envelope)
+    except KeywordError as ex:
+        return {"ok": False, "error": ex.error}
+    except LibbyError as ex:
+        return {"ok": False, "error": str(ex)}
+
+
 def _rpc_show_one(lib: Libby, peer: str, name: str, timeout: float) -> Dict[str, Any]:
-    result = lib.rpc(peer, name, {}, ttl_ms=int(timeout * 1000))
-    return result.get("resp", result) if isinstance(result, dict) else {}
+    return _peel(lib.rpc(peer, name, {}, ttl_ms=int(timeout * 1000)))
 
 
 def _rpc_keys_list(lib: Libby, peer: str, pattern: str, timeout: float) -> Dict[str, Any]:
-    result = lib.rpc(peer, "keys.list", {"pattern": pattern}, ttl_ms=int(timeout * 1000))
-    return result.get("resp", result) if isinstance(result, dict) else {}
+    return _peel(lib.rpc(peer, "keys.list", {"pattern": pattern}, ttl_ms=int(timeout * 1000)))
 
 
 def _rpc_keys_describe(lib: Libby, peer: str, name: str, timeout: float) -> Dict[str, Any]:
-    result = lib.rpc(peer, "keys.describe", {"name": name}, ttl_ms=int(timeout * 1000))
-    return result.get("resp", result) if isinstance(result, dict) else {}
+    return _peel(lib.rpc(peer, "keys.describe", {"name": name}, ttl_ms=int(timeout * 1000)))
 
 
 def cmd_show(namespace: argparse.Namespace) -> int:
-    config = _load_config(namespace.config)
-    group, scope, name = _parse_keyword(namespace.keyword, allow_pattern=True)
-    peer = _peer_id(group, scope)
+    config = load_cli_config(namespace.config)
+    group, scope, name = parse_keyword(namespace.keyword, allow_pattern=True)
+    peer = peer_id(group, scope)
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
     qualified_arg = f"{group}.{scope}.{name}"
 
@@ -304,9 +221,9 @@ def cmd_show(namespace: argparse.Namespace) -> int:
 
 
 def cmd_list(namespace: argparse.Namespace) -> int:
-    config = _load_config(namespace.config)
-    group, scope, pattern = _parse_keyword(namespace.pattern, allow_pattern=True)
-    peer = _peer_id(group, scope)
+    config = load_cli_config(namespace.config)
+    group, scope, pattern = parse_keyword(namespace.pattern, allow_pattern=True)
+    peer = peer_id(group, scope)
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
 
     lib: Optional[Libby] = None
@@ -337,9 +254,9 @@ def cmd_list(namespace: argparse.Namespace) -> int:
 
 
 def cmd_describe(namespace: argparse.Namespace) -> int:
-    config = _load_config(namespace.config)
-    group, scope, name = _parse_keyword(namespace.keyword, allow_pattern=False)
-    peer = _peer_id(group, scope)
+    config = load_cli_config(namespace.config)
+    group, scope, name = parse_keyword(namespace.keyword, allow_pattern=False)
+    peer = peer_id(group, scope)
     qualified = f"{group}.{scope}.{name}"
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
 
@@ -365,7 +282,7 @@ def cmd_describe(namespace: argparse.Namespace) -> int:
 
 
 def cmd_modify(namespace: argparse.Namespace) -> int:
-    config = _load_config(namespace.config)
+    config = load_cli_config(namespace.config)
 
     # Two forms accepted:
     #   modify <group>.<scope>.<name>=<value>
@@ -382,17 +299,16 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
         keyword_str = namespace.keyword
         value_str = namespace.value
 
-    group, scope, name = _parse_keyword(keyword_str)
-    peer = _peer_id(group, scope)
+    group, scope, name = parse_keyword(keyword_str)
+    peer = peer_id(group, scope)
     qualified = f"{group}.{scope}.{name}"
-    value = _coerce_value(value_str)
+    value = coerce_value(value_str)
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
         timeout = _modify_timeout(lib, peer, name, namespace.timeout)
-        result = lib.rpc(peer, name, {"value": value}, ttl_ms=int(timeout * 1000))
-        resp = result.get("resp", result) if isinstance(result, dict) else {}
+        resp = _peel(lib.rpc(peer, name, {"value": value}, ttl_ms=int(timeout * 1000)))
         return _emit_one(qualified, resp, as_json=namespace.json)
     except Exception as ex:
         return _emit_error(qualified, str(ex), as_json=namespace.json)
@@ -415,7 +331,7 @@ def _parse_json(text: Optional[str]) -> Dict[str, Any]:
 
 def cmd_req(namespace: argparse.Namespace) -> int:
     """Raw RPC for debugging — works on either transport."""
-    config = _load_config(namespace.config)
+    config = load_cli_config(namespace.config)
     payload = _parse_json(namespace.data)
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
 
@@ -443,8 +359,8 @@ def cmd_req(namespace: argparse.Namespace) -> int:
 
 def cmd_sub(namespace: argparse.Namespace) -> int:
     """Subscribe to topics. ZMQ-only."""
-    config = _load_config(namespace.config)
-    if _resolve_transport(namespace, config) != "zmq":
+    config = load_cli_config(namespace.config)
+    if resolve_transport(namespace.transport, config) != "zmq":
         print("libby sub: only ZMQ transport is supported", file=sys.stderr)
         return 2
     if not namespace.topics:
@@ -568,7 +484,12 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     namespace = build_parser().parse_args(argv)
-    return namespace.func(namespace)
+    try:
+        return namespace.func(namespace)
+    except LibbyError as ex:
+        # Core raises LibbyError; the CLI is the boundary that exits
+        print(f"libby: {ex}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":
