@@ -3,6 +3,8 @@ from typing import Callable, Dict, Optional
 import zmq
 from bamboo.transport import Transport
 
+from ._transport_errors import describe_exception
+
 DestStr = str
 SrcStr = str
 
@@ -23,7 +25,12 @@ class ZmqTransport(Transport):
 
         self._router = self._ctx.socket(zmq.ROUTER)
         self._router.setsockopt(zmq.LINGER, 0)
-        self._router.bind(bind_router)
+        try:
+            self._router.bind(bind_router)
+        except zmq.ZMQError as e:
+            raise RuntimeError(
+                f"Failed to setup ZMQ transport: {describe_exception(e)}"
+            ) from e
         self._router_id_by_peer: Dict[str, bytes] = {}
 
         self._dealers: Dict[str, zmq.Socket] = {}
