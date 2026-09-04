@@ -28,8 +28,16 @@ def parse_keyword(arg: str, *, allow_pattern: bool = False) -> Tuple[str, str, s
 
 
 def peer_id(group: str, scope: str) -> str:
-    """Map a keyword's group/scope to the daemon peer id."""
-    return f"{group}.{scope}"
+    """Map a keyword's group/scope to the daemon peer id.
+
+    Underscore, not dot: every deployed daemon config sets peer_id this way
+    (e.g. hsfei_pickoff), and it's what the CLI/lib addressing scheme was
+    designed against (see plans/libby_lib_design.md).
+    """
+    return f"{group}_{scope}"
+
+
+_LITERALS = {"null": None, "true": True, "false": False}
 
 
 def coerce_value(value: str) -> Any:
@@ -41,12 +49,8 @@ def coerce_value(value: str) -> Any:
     if value == "":
         return None
     low = value.strip().lower()
-    if low == "null":
-        return None
-    if low == "true":
-        return True
-    if low == "false":
-        return False
+    if low in _LITERALS:
+        return _LITERALS[low]
     try:
         return int(value)
     except ValueError:

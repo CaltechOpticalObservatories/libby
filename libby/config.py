@@ -11,12 +11,19 @@ try:
 except Exception:
     yaml = None
 
+from .errors import ConfigError as _LibbyConfigError
+
 
 PathLike = Union[str, os.PathLike]
 
 
-class ConfigError(ValueError):
-    """Raised when daemon configuration cannot be selected or validated."""
+class ConfigError(_LibbyConfigError, ValueError):
+    """Raised when daemon configuration cannot be selected or validated.
+
+    Subclasses the public ``libby.ConfigError`` too, so callers can catch one
+    exception regardless of whether it came from daemon subsystem-config
+    loading (here) or client cli_config.yaml loading (libby.config_resolve).
+    """
 
 
 def _load_json(path: pathlib.Path) -> Dict[str, Any]:
