@@ -3,6 +3,8 @@ from typing import Callable, Optional
 import pika
 from pika.exceptions import AMQPError
 
+from ._transport_errors import describe_exception
+
 
 DestStr = str
 SrcStr = str
@@ -65,7 +67,9 @@ class RabbitMQTransport:
             self._setup_topology(self._send_channel, declare_queue=False)
 
         except AMQPError as e:
-            raise RuntimeError(f"Failed to setup RabbitMQ transport: {e}")
+            raise RuntimeError(
+                f"Failed to setup RabbitMQ transport: {describe_exception(e)}"
+            ) from e
 
     def _build_queue_name(self) -> str:
         """Build queue name, including group_id if provided."""
