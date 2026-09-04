@@ -45,6 +45,12 @@ class RabbitMQTransport:
 
         # Receive connection created in background thread (not stored as instance vars)
         self._stop = threading.Event()
+        # Set once the receive queue is declared, bound, and consuming. start()
+        # blocks on this so callers never publish a request before this peer
+        # can actually receive the reply -- otherwise a fast responder's ACK/RESP
+        # can arrive before our queue exists and get silently dropped by the
+        # direct exchange, surfacing as a spurious timeout.
+        self._ready = threading.Event()
         self._rx_thread: Optional[threading.Thread] = None
         # Pump heartbeats so an idle send connection doesn't get reset by the broker
         self._hb_thread: Optional[threading.Thread] = None
@@ -134,13 +140,19 @@ class RabbitMQTransport:
         """Maximum transmission unit - RabbitMQ can handle large messages."""
         return 512 * 1024
 
-    def start(self) -> None:
-        """Start consuming messages from RabbitMQ."""
+    def start(self, ready_timeout_s: float = 5.0) -> None:
+        """Start consuming messages from RabbitMQ.
+
+        Blocks (up to ``ready_timeout_s``) until the receive queue is
+        declared, bound, and consuming, so callers can publish a request
+        immediately after this returns without racing their own reply queue.
+        """
         if self._rx_thread and self._rx_thread.is_alive():
             return
 
         # Create separate receive connection in the background thread
         self._stop.clear()
+        self._ready.clear()
         self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True)
         self._rx_thread.start()
 
@@ -149,6 +161,8 @@ class RabbitMQTransport:
                 target=self._hb_loop, daemon=True, name="libby-rmq-hb"
             )
             self._hb_thread.start()
+
+        self._ready.wait(timeout=ready_timeout_s)
 
     def stop(self) -> None:
         """Stop consuming and close RabbitMQ connection."""
@@ -276,6 +290,7 @@ class RabbitMQTransport:
                 on_message_callback=message_callback,
                 auto_ack=False  # Manual ack for reliability
             )
+            self._ready.set()
 
             # Consume until stopped
             while not self._stop.is_set():
@@ -285,6 +300,7 @@ class RabbitMQTransport:
                     if self._stop.is_set():
                         break
                     # Connection lost, try to reconnect
+                    self._ready.clear()
                     try:
                         if recv_ch and recv_ch.is_open:
                             recv_ch.close()
@@ -303,6 +319,7 @@ class RabbitMQTransport:
                             on_message_callback=message_callback,
                             auto_ack=False
                         )
+                        self._ready.set()
                     except Exception:
                         # Failed to reconnect, wait and try again
                         if not self._stop.is_set():
