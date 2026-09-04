@@ -11,12 +11,19 @@ try:
 except Exception:
     yaml = None
 
+from .errors import ConfigError as _LibbyConfigError
+
 
 PathLike = Union[str, os.PathLike]
 
 
-class ConfigError(ValueError):
-    """Raised when daemon configuration cannot be selected or validated."""
+class ConfigError(_LibbyConfigError, ValueError):
+    """Raised when daemon configuration cannot be selected or validated.
+
+    Subclasses the public ``libby.ConfigError`` too, so callers can catch one
+    exception regardless of whether it came from daemon subsystem-config
+    loading (here) or client cli_config.yaml loading (libby.config_resolve).
+    """
 
 
 def _load_json(path: pathlib.Path) -> Dict[str, Any]:
@@ -39,11 +46,17 @@ def _load_yaml(path: pathlib.Path) -> Dict[str, Any]:
     return parsed
 
 
-def load_config(path: PathLike) -> Dict[str, Any]:
-    """Load a JSON or YAML configuration file."""
+def load_config(path: PathLike, *, optional: bool = False) -> Dict[str, Any]:
+    """Load a JSON or YAML configuration file.
+
+    A missing file raises ``FileNotFoundError`` unless ``optional``, in which
+    case ``{}`` is returned - used by the client's optional cli_config.yaml.
+    """
 
     config_path = pathlib.Path(path)
     if not config_path.exists():
+        if optional:
+            return {}
         raise FileNotFoundError(f"config file not found: {config_path}")
 
     extension = config_path.suffix.lower()
