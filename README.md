@@ -121,6 +121,12 @@ keyword registry:
 - `keys.describe` — payload `{"name": "..."}` → flat metadata dict.
   Exact lookup; no wildcards.
 
+`LibbyDaemon` subclasses also get a `lasterror` keyword for free (not just
+any keyword-registry user, since it needs the daemon's own logger): a
+nullable string holding the most recent `self.logger.error(...)` message, so
+a failure that only got logged locally is still visible to a remote
+`libby show <peer>.lasterror`. Write `null` to clear it.
+
 ## Client library
 
 `Client` is the programmatic front for reading and writing keywords — the
