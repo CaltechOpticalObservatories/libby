@@ -52,7 +52,8 @@ class LibbyDaemon:
 
     peer_id: Optional[str] = None
     bind: Optional[str] = None
-    address_book: Optional[Dict[str, str]] = None
+    # peer_id -> {"endpoint": str, "group_id": Optional[str]} (ZMQ only)
+    address_book: Optional[Dict[str, Dict[str, Any]]] = None
     discovery_enabled: bool = True
     discovery_interval_s: float = 5.0
 
@@ -234,7 +235,7 @@ class LibbyDaemon:
     def config_bind(self) -> str:
         return self.bind or self._must("bind")
 
-    def config_address_book(self) -> Dict[str, str]:
+    def config_address_book(self) -> Dict[str, Dict[str, Any]]:
         return dict(self.address_book or {})
 
     def config_rabbitmq_url(self) -> str:

@@ -55,7 +55,7 @@ class Libby:
         cls,
         self_id: str,
         bind: str,
-        address_book: Dict[str, str],
+        address_book: Dict[str, Dict[str, Any]],
         keys: Optional[List[str]] = None,
         callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
         *,
@@ -254,6 +254,17 @@ class Libby:
                 return True
             time.sleep(poll_s)
         return False
+
+    def find_peer(self, group_id: Optional[str], peer_id: str, timeout_s: float = 2.0) -> bool:
+        """
+        Return True if `peer_id` is a confirmed member of `group_id`, waiting
+        up to `timeout_s` for confirmation if it isn't already known.
+
+        One API across transports; each transport keeps its own bookkeeping
+        (see plans/libby_find_peer_design.md) since RabbitMQ's broker-fed
+        presence table and ZMQ's address book don't share a shape.
+        """
+        return self.transport.find_peer(group_id, peer_id, timeout_s)
 
     def learn_peer_keys(self, peer_id: str, keys: List[str]) -> None:
         self.proto.learn_peer_keys(peer_id, keys)

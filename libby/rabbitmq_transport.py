@@ -1,11 +1,22 @@
+import json
 import threading
-from typing import Callable, Optional
+import time
+from typing import Any, Callable, Dict, Optional
 import pika
 from pika.exceptions import AMQPError
 
 
 DestStr = str
 SrcStr = str
+
+# Fanout exchange peers use to announce {peer_id, group_id} to each other.
+# Separate from libby.fanout so presence traffic never reaches bamboo's
+# protocol callback; distinguished on receipt by the _PRESENCE_MARKER key,
+# which a real bamboo frame (see bamboo/wire.py) never has.
+_PRESENCE_EXCHANGE = "libby.presence"
+_PRESENCE_MARKER = "_libby_presence"
+_PRESENCE_INTERVAL_S = 3.0
+_PRESENCE_STALE_S = 10.0
 
 class RabbitMQTransport:
     """
@@ -47,6 +58,11 @@ class RabbitMQTransport:
         # Pump heartbeats so an idle send connection doesn't get reset by the broker
         self._hb_thread: Optional[threading.Thread] = None
         self._hb_interval_s: float = 30.0
+
+        # Other peers seen via presence announcements: peer_id -> {group_id, last_seen}
+        self._peer_table: Dict[str, Dict[str, Any]] = {}
+        self._peer_table_lock = threading.Lock()
+        self._presence_thread: Optional[threading.Thread] = None
 
         # Setup exchanges and queue
         self._setup()
@@ -98,6 +114,13 @@ class RabbitMQTransport:
             durable=False
         )
 
+        # Fanout exchange for presence announcements (see find_peer)
+        channel.exchange_declare(
+            exchange=_PRESENCE_EXCHANGE,
+            exchange_type='fanout',
+            durable=False
+        )
+
         if not declare_queue:
             return
 
@@ -119,6 +142,12 @@ class RabbitMQTransport:
         channel.queue_bind(
             queue=self._queue_name,
             exchange='libby.fanout'
+        )
+
+        # Bind queue to the presence exchange (for find_peer)
+        channel.queue_bind(
+            queue=self._queue_name,
+            exchange=_PRESENCE_EXCHANGE
         )
 
     @property
@@ -146,6 +175,12 @@ class RabbitMQTransport:
             )
             self._hb_thread.start()
 
+        if self._presence_thread is None or not self._presence_thread.is_alive():
+            self._presence_thread = threading.Thread(
+                target=self._presence_loop, daemon=True, name="libby-rmq-presence"
+            )
+            self._presence_thread.start()
+
     def stop(self) -> None:
         """Stop consuming and close RabbitMQ connection."""
         self._stop.set()
@@ -155,6 +190,8 @@ class RabbitMQTransport:
             self._rx_thread.join(timeout=2.0)
         if self._hb_thread:
             self._hb_thread.join(timeout=2.0)
+        if self._presence_thread:
+            self._presence_thread.join(timeout=2.0)
 
         # Close send connection
         if self._send_channel and self._send_channel.is_open:
@@ -222,6 +259,70 @@ class RabbitMQTransport:
             # Silently drop on error to match Bamboo's no-NACK policy
             pass
 
+    def find_peer(self, group_id: Optional[str], peer_id: str, timeout_s: float = 2.0) -> bool:
+        """
+        Return True if `peer_id` has announced itself as a member of `group_id`
+        recently (see the presence loop), waiting up to `timeout_s` for an
+        announcement to arrive if we haven't seen one yet.
+        """
+        deadline = time.time() + timeout_s
+        while True:
+            with self._peer_table_lock:
+                entry = self._peer_table.get(peer_id)
+            if entry is not None and entry.get("group_id") == group_id:
+                if time.time() - entry["last_seen"] < _PRESENCE_STALE_S:
+                    return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.1)
+
+    def _handle_if_presence(self, body: bytes) -> bool:
+        """If `body` is a presence announcement, record it and return True.
+
+        A real bamboo frame is JSON too (see bamboo/wire.py) but never has
+        `_PRESENCE_MARKER`, so this can't misclassify protocol traffic.
+        """
+        try:
+            data = json.loads(body)
+        except (ValueError, UnicodeDecodeError):
+            return False
+        if not isinstance(data, dict) or not data.get(_PRESENCE_MARKER):
+            return False
+        peer_id = data.get("peer_id")
+        if not peer_id:
+            return True
+        with self._peer_table_lock:
+            self._peer_table[peer_id] = {
+                "group_id": data.get("group_id"),
+                "last_seen": time.time(),
+            }
+        return True
+
+    def _publish_presence(self) -> None:
+        """Announce {peer_id, group_id} on the presence exchange."""
+        if not self._send_channel or not self._send_channel.is_open:
+            return
+        body = json.dumps({
+            _PRESENCE_MARKER: True,
+            "peer_id": self._peer_id,
+            "group_id": self._group_id,
+        }).encode("utf-8")
+        try:
+            with self._send_lock:
+                self._send_channel.basic_publish(
+                    exchange=_PRESENCE_EXCHANGE,
+                    routing_key='',
+                    body=body,
+                )
+        except AMQPError:
+            pass
+
+    def _presence_loop(self) -> None:
+        """Periodically announce this peer so others' find_peer can see it."""
+        self._publish_presence()
+        while not self._stop.wait(timeout=_PRESENCE_INTERVAL_S):
+            self._publish_presence()
+
     def _hb_loop(self) -> None:
         """Drive heartbeats on the send connection during idle periods."""
         while not self._stop.wait(timeout=self._hb_interval_s):
@@ -240,6 +341,10 @@ class RabbitMQTransport:
 
         def message_callback(ch, method, properties, body):
             """Handle incoming message."""
+            if self._handle_if_presence(body):
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                return
+
             if not self._cb:
                 ch.basic_ack(delivery_tag=method.delivery_tag)
                 return
