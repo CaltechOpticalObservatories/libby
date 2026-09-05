@@ -18,6 +18,12 @@ class ZmqTransport(Transport):
     - Incoming frames arrive on ROUTER as:
          [IDENT, PAYLOAD]  or  [IDENT, b"", PAYLOAD]
       We pass IDENT as "peer:<peer_id>" to the Protocol callback.
+    - Replies to a request *we* initiated over one of our own DEALER sockets
+      arrive on that DEALER socket, not on our ROUTER (that's how ZMQ's
+      ROUTER/DEALER pattern works: a reply travels back over whichever
+      connection carried the request). Every DEALER we create is registered
+      with the poller and mapped back to its peer_id so those replies are
+      actually read instead of sitting unpolled forever.
     """
 
     def __init__(self, bind_router: str, address_book: Dict[str, str], my_id: str, group_id: Optional[str] = None):
@@ -34,6 +40,7 @@ class ZmqTransport(Transport):
         self._router_id_by_peer: Dict[str, bytes] = {}
 
         self._dealers: Dict[str, zmq.Socket] = {}
+        self._dealer_peer: Dict[zmq.Socket, str] = {}
         self._book: Dict[str, str] = dict(address_book)
         self._cb: Optional[Callable[[SrcStr, bytes], None]] = None
 
@@ -67,10 +74,15 @@ class ZmqTransport(Transport):
         # Close dealers
         for s in list(self._dealers.values()):
             try:
+                self._poller.unregister(s)
+            except Exception:
+                pass
+            try:
                 s.close(0)
             except Exception:
                 pass
         self._dealers.clear()
+        self._dealer_peer.clear()
         # Close router last
         try:
             self._poller.unregister(self._router)
@@ -160,6 +172,8 @@ class ZmqTransport(Transport):
         # So identity must be our local id.
         s.setsockopt(zmq.IDENTITY, self._id.encode("utf-8"))
         s.connect(endpoint)
+        self._poller.register(s, zmq.POLLIN)
+        self._dealer_peer[s] = peer_id
         return s
 
     def _rx_loop(self) -> None:
@@ -190,3 +204,18 @@ class ZmqTransport(Transport):
                 if self._cb:
                     # Pass the *remote* peer id as the source
                     self._cb(f"peer:{src_peer}", payload)
+
+            # Replies arriving on DEALER sockets we opened ourselves. Unlike
+            # the ROUTER, a DEALER doesn't get an identity envelope frame (it
+            # already knows who it's connected to), so identify the source
+            # from which socket it came in on instead.
+            for sock, peer_id in list(self._dealer_peer.items()):
+                if socks.get(sock) != zmq.POLLIN:
+                    continue
+                try:
+                    parts = sock.recv_multipart(flags=zmq.NOBLOCK)
+                except zmq.Again:
+                    continue
+                if not parts or not self._cb:
+                    continue
+                self._cb(f"peer:{peer_id}", parts[-1])
