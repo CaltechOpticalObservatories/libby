@@ -10,7 +10,6 @@ from libby import Client, KeywordError
 from libby.daemon import LibbyDaemon
 
 RABBITMQ_URL = "amqp://localhost"
-PEER_ID = "hsfei_pickofftest"
 
 
 def _broker_available() -> bool:
@@ -28,7 +27,8 @@ class ClientIntegrationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         class _TestDaemon(LibbyDaemon):
-            peer_id = PEER_ID
+            peer_id = "pickofftest"
+            group_id = "hsfei"
             transport = "rabbitmq"
             discovery_enabled = False
 

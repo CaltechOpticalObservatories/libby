@@ -36,10 +36,11 @@ class ParseKeywordTests(unittest.TestCase):
 
 
 class PeerIdTests(unittest.TestCase):
-    def test_joins_with_underscore(self):
-        # Matches every deployed daemon's peer_id (e.g. hsfei_pickoff), not a
-        # dot: see plans/libby_lib_design.md.
-        self.assertEqual(peer_id("hsfei", "pickoff"), "hsfei_pickoff")
+    def test_joins_group_and_scope_with_a_dot(self):
+        # Matches the qualified wire identity Libby.rabbitmq()/zmq() compute
+        # from a daemon's own peer_id/group_id config fields (qualified_peer_id):
+        # see plans/peer_group_naming_design.md.
+        self.assertEqual(peer_id("hsfei", "adc"), "hsfei.adc")
 
 
 class CoerceValueTests(unittest.TestCase):

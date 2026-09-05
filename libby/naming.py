@@ -1,7 +1,7 @@
-"""Keyword-name parsing and value coercion shared by the libby CLI and lib."""
+"""Keyword-name parsing, value coercion, and peer/group naming - transport-agnostic."""
 from __future__ import annotations
 
-from typing import Any, Tuple
+from typing import Any, Optional, Tuple
 
 from .errors import KeywordNameError
 
@@ -27,14 +27,32 @@ def parse_keyword(arg: str, *, allow_pattern: bool = False) -> Tuple[str, str, s
     return group, scope, name
 
 
+def qualified_peer_id(peer_id: str, group_id: Optional[str] = None) -> str:
+    """Return the wire identity for `peer_id`, namespaced by `group_id`.
+
+    Joins as "<group_id>.<peer_id>" when group_id is set, else returns
+    peer_id unchanged. Computed once here and handed to a transport as an
+    already-unique opaque string, rather than teaching each transport
+    implementation to be group-aware on its own: a short, human peer_id like
+    "adc" is only safe from cross-group collisions once whatever's actually
+    used on the wire (a routing key, a DEALER identity, or any future
+    transport's own addressing) includes the group. See
+    plans/peer_group_naming_design.md.
+    """
+    if group_id:
+        return f"{group_id}.{peer_id}"
+    return peer_id
+
+
 def peer_id(group: str, scope: str) -> str:
     """Map a keyword's group/scope to the daemon peer id.
 
-    Underscore, not dot: every deployed daemon config sets peer_id this way
-    (e.g. hsfei_pickoff), and it's what the CLI/lib addressing scheme was
-    designed against (see plans/libby_lib_design.md).
+    `scope` is the peer_id, `group` is its group_id - the same pair
+    `qualified_peer_id` joins on the daemon side, so client and daemon
+    always agree on the wire identity by construction. See
+    plans/peer_group_naming_design.md.
     """
-    return f"{group}_{scope}"
+    return qualified_peer_id(scope, group)
 
 
 _LITERALS = {"null": None, "true": True, "false": False}
