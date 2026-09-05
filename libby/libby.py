@@ -8,6 +8,7 @@ from bamboo.discovery import Discovery
 
 from .keyword import Keyword, match_pattern
 from .keyword_registry import KeywordRegistry
+from .naming import qualified_peer_id
 
 class Libby:
     def __init__(
@@ -73,10 +74,11 @@ class Libby:
                 "or provide your own Transport implementation."
             ) from e
 
-        t = ZmqTransport(bind_router=bind, address_book=address_book, my_id=self_id, group_id=group_id)
+        wire_id = qualified_peer_id(self_id, group_id)
+        t = ZmqTransport(bind_router=bind, address_book=address_book, my_id=wire_id, group_id=group_id)
         t.start()
         return cls(
-            self_id=self_id,
+            self_id=wire_id,
             transport=t,
             keys=keys,
             callback=callback,
@@ -125,10 +127,11 @@ class Libby:
                 "  pip install pika"
             ) from e
 
-        t = RabbitMQTransport(peer_id=self_id, rabbitmq_url=rabbitmq_url, group_id=group_id)
+        wire_id = qualified_peer_id(self_id, group_id)
+        t = RabbitMQTransport(peer_id=wire_id, rabbitmq_url=rabbitmq_url, group_id=group_id)
         t.start()
         return cls(
-            self_id=self_id,
+            self_id=wire_id,
             transport=t,
             keys=keys,
             callback=callback,

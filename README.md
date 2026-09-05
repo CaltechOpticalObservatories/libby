@@ -54,6 +54,17 @@ To install any optional dependencies, such as development dependencies, use:
 pip install -e .[dev]
 ```
 
+## Testing
+
+```bash
+python -m unittest discover -s tests
+```
+
+Most of `tests/` needs no transport at all. `tests/test_client_integration.py`
+is the exception: it starts a real `LibbyDaemon` over RabbitMQ and exercises
+`Client` against it, and skips itself automatically if no broker is reachable
+at `amqp://localhost`.
+
 ## Keywords
 
 A **keyword** is a typed named value served over libby, with a uniform payload convention:
@@ -110,6 +121,55 @@ keyword registry:
 - `keys.describe` — payload `{"name": "..."}` → flat metadata dict.
   Exact lookup; no wildcards.
 
+`LibbyDaemon` subclasses also get a `lasterror` keyword for free (not just
+any keyword-registry user, since it needs the daemon's own logger): a
+nullable string holding the most recent `self.logger.error(...)` message, so
+a failure that only got logged locally is still visible to a remote
+`libby show <peer>.lasterror`. Write `null` to clear it.
+
+## Client library
+
+`Client` is the programmatic front for reading and writing keywords — the
+import-and-use counterpart to the CLI. Where the CLI opens a connection per
+command, a `Client` holds one for its lifetime, so a script can touch many
+keywords cheaply. It addresses keywords by the same qualified
+`<group>.<scope>.<name>` and reuses the CLI's `cli_config.yaml`.
+
+```python
+from libby import Client
+
+with Client.from_config() as client:          # transport/url from cli_config.yaml
+    pos = client.get("hsfei.focpupsel.positionvalue")   # -> 7.15
+    full = client.show("hsfei.focpupsel.positionvalue") # -> {"ok": True, "value": 7.15, "units": "mm", ...}
+    client.set("hsfei.pickoff.softmax", 120)            # returns the applied value
+```
+
+Construct explicitly when you don't want config-file resolution:
+
+```python
+client = Client.rabbitmq(rabbitmq_url="amqp://user:pass@host")
+client = Client.zmq(address_book={"hsfei_pickoff": "tcp://host:5555"})
+```
+
+- `get(name)` → the value; `show(name)` → the full response dict (value, units,
+  flags); `set(name, value)` → the value the daemon applied.
+- Failures raise rather than return sentinels: `KeywordError` when the daemon
+  rejects a get/set (its message is on `.error`), `LibbyTimeout` when a request
+  isn't answered, both subclasses of `LibbyError`. `set` accepts `timeout_s=`;
+  otherwise it honors the keyword's `timeout_s` metadata, like the CLI.
+
+```python
+from libby import KeywordError
+
+try:
+    client.get("hsfei.yjpiaagim.positionvaluex")
+except KeywordError as ex:
+    print(ex.error)        # "Control loops are not closed"
+```
+
+Exact names only for now; `%` wildcard reads, `list`, and `describe` are planned
+follow-ons — use the CLI for those today.
+
 ## CLI
 
 `libby` is the command-line front for keyword peers. Verbs:
@@ -121,9 +181,13 @@ libby list     <group>.<scope>.<pattern>  # list keyword names (% wildcard in na
 libby describe <group>.<scope>.<name>     # metadata for one keyword (exact name)
 ```
 
-`<group>.<scope>` is the address of one peer (`peer_id` =
-`<group>_<scope>`). Cross-peer fanout is not supported. `req` and `sub`
-are kept for raw RPC / topic debugging.
+`<group>.<scope>` is the address of one peer: `group` is that peer's
+`group_id`, `scope` is its `peer_id` (e.g. `peer_id: adc, group_id: hsfei`
+in the daemon's config is addressed as `hsfei.adc`). `Libby.rabbitmq()` /
+`Libby.zmq()` build the actual wire identity from those two fields via
+`libby.naming.qualified_peer_id` - a daemon config never needs to
+concatenate them by hand. Cross-peer fanout is not supported. `req` and
+`sub` are kept for raw RPC / topic debugging.
 
 ### Examples
 

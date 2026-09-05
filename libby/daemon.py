@@ -20,6 +20,27 @@ EvtHandler = Callable[[Payload], None]
 DaemonT = TypeVar("DaemonT", bound="LibbyDaemon")
 
 
+class _LastErrorHandler(logging.Handler):
+    """Captures a daemon's most recent ERROR+ log record.
+
+    A daemon that only logs a failure locally (self.logger.error(...)) leaves
+    that failure invisible to anyone not watching its console/log file - the
+    CLI/Client see nothing (github.com/CaltechOpticalObservatories/hispec/
+    issues/173). This feeds the ``lasterror`` keyword every LibbyDaemon
+    exposes, so it's retrievable over RPC regardless of transport.
+    """
+
+    def __init__(self, daemon: "LibbyDaemon") -> None:
+        super().__init__(level=logging.ERROR)
+        self._daemon = daemon
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._daemon._last_error = self.format(record)
+        except Exception:
+            pass
+
+
 class LibbyDaemon:
     """Base class for configurable Libby daemons.
 
@@ -79,7 +100,9 @@ class LibbyDaemon:
         self._stop_event = threading.Event()
         self._started = False
         self.libby: Optional[Libby] = None
+        self._last_error: Optional[str] = None
         self.logger = logging.getLogger(type(self).__name__)
+        self._ensure_last_error_handler()
 
     @classmethod
     def config_attributes(cls) -> frozenset[str]:
@@ -169,6 +192,7 @@ class LibbyDaemon:
         self.logger = logging.getLogger(
             self.peer_id or type(self).__name__
         )
+        self._ensure_last_error_handler()
 
         raw = self._config.get("logging")
         if not isinstance(raw, Mapping):
@@ -210,7 +234,20 @@ class LibbyDaemon:
         setattr(handler, "_libby_daemon_handler", True)
         self.logger.addHandler(handler)
 
-    
+    def _ensure_last_error_handler(self) -> None:
+        """Attach the lasterror-tracking handler to self.logger (idempotent).
+
+        Called from both __init__ (covers daemons built directly, e.g. in
+        tests or examples) and _setup_logging (which may point self.logger
+        at a different, peer_id-named Logger once config is loaded).
+        """
+        if any(getattr(handler, "_libby_lasterror_handler", False)
+               for handler in self.logger.handlers):
+            return
+        handler = _LastErrorHandler(self)
+        setattr(handler, "_libby_lasterror_handler", True)
+        self.logger.addHandler(handler)
+
     ### Optional hooks
 
     def on_start(self, libby: Libby) -> None:
@@ -354,6 +391,16 @@ class LibbyDaemon:
             self.libby = self.build_libby()
             self._register_services(self.services)
             self._register_topics(self.topics)
+            self.keyword_registry.string(
+                "lasterror",
+                getter=lambda: self._last_error,
+                setter=self._clear_last_error,
+                nullable=True,
+                description=(
+                    "Most recent ERROR-level log message from this daemon; "
+                    "write null to clear."
+                ),
+            )
 
             if self.config_discovery_enabled():
                 try:
@@ -435,6 +482,12 @@ class LibbyDaemon:
             f"set {name!r} in the class or configuration, "
             f"or override config_{name}()"
         )
+
+    def _clear_last_error(self, value: Any) -> None:
+        """Setter for the lasterror keyword: only accepts null, to clear it."""
+        if value is not None:
+            raise ValueError("lasterror is read-only except to clear it (write null)")
+        self._last_error = None
 
     def _service_adapter(self, fn: RPCHandler):
         def adapter(user_payload: dict, _ctx: dict) -> dict:

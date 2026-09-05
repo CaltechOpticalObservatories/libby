@@ -12,9 +12,18 @@ from .keyword import (
     match_pattern,
 )
 from .keyword_registry import KeywordRegistry
+from .client import Client
+from .errors import (
+    LibbyError,
+    ConfigError,
+    KeywordNameError,
+    LibbyTimeout,
+    KeywordError,
+)
 
 __all__ = [
     "Libby",
+    "Client",
     "Protocol",
     "MessageBuilder",
     "KeyRegistry",
@@ -26,4 +35,9 @@ __all__ = [
     "TriggerKeyword",
     "KeywordRegistry",
     "match_pattern",
+    "LibbyError",
+    "ConfigError",
+    "KeywordNameError",
+    "LibbyTimeout",
+    "KeywordError",
 ]
