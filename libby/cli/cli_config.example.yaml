@@ -13,3 +13,10 @@ rabbitmq_url: amqp://localhost
 # ZMQ address book (peer_id -> tcp://host:port). Only consulted when
 # transport=zmq. Leave empty for RabbitMQ deployments.
 peers: {}
+
+# Triage logging. Separate from stdout/stderr command output (including
+# --json), so this never gets mixed into anything a script might parse.
+# Override per-call with --log-level / --log-file / --verbose.
+# logging:
+#   level: WARNING          # DEBUG, INFO, WARNING, ERROR, CRITICAL
+#   file: ~/.libby/cli.log  # rotated at 1MB, 3 backups kept

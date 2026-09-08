@@ -3,10 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
+import logging.handlers
+import shlex
 import signal
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit, urlunsplit
 
 from libby.config_resolve import (
     DEFAULT_BIND,
@@ -25,20 +30,113 @@ from libby.response import unwrap
 DEFAULT_SELF_ID = "cli"
 DEFAULT_TIMEOUT_S = 3.0
 
+DEFAULT_LOG_FILE = Path.home() / ".libby" / "cli.log"
+DEFAULT_LOG_LEVEL = "WARNING"
+
+# Triage log — separate from stdout/stderr, which remain reserved for
+# command output (including machine-parseable --json). Off by default
+# beyond WARNING so normal use stays quiet; --log-level/-v turn it up.
+logger = logging.getLogger("libby.cli")
+
+
+def _redact_url(url: Optional[str]) -> Optional[str]:
+    """Mask userinfo (e.g. amqp://user:pass@host) before it hits the log."""
+    if not url:
+        return url
+    try:
+        parsed = urlsplit(url)
+        if not (parsed.username or parsed.password):
+            return url
+        netloc = parsed.hostname or ""
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        return urlunsplit(parsed._replace(netloc=f"***:***@{netloc}"))
+    except Exception:
+        return "***"
+
+
+def _redact_argv(argv: List[str]) -> List[str]:
+    """Mask ``--rabbitmq-url``'s value before argv is logged verbatim."""
+    out: List[str] = []
+    take_next = False
+    for tok in argv:
+        if take_next:
+            out.append(_redact_url(tok))
+            take_next = False
+        elif tok == "--rabbitmq-url":
+            out.append(tok)
+            take_next = True
+        elif tok.startswith("--rabbitmq-url="):
+            _, _, val = tok.partition("=")
+            out.append(f"--rabbitmq-url={_redact_url(val)}")
+        else:
+            out.append(tok)
+    return out
+
+
+def _setup_logging(namespace: argparse.Namespace, config: Dict[str, Any]) -> None:
+    """Configure the triage log."""
+    raw = config.get("logging")
+    raw = raw if isinstance(raw, dict) else {}
+
+    level_name = str(namespace.log_level or raw.get("level") or DEFAULT_LOG_LEVEL).upper()
+    level = getattr(logging, level_name, logging.WARNING)
+
+    logger.setLevel(logging.DEBUG)
+    logger.propagate = False
+
+    log_file = Path(namespace.log_file or raw.get("file") or DEFAULT_LOG_FILE).expanduser()
+    file_handler = next(
+        (h for h in logger.handlers if getattr(h, "_libby_cli_handler", False)), None
+    )
+    if file_handler is None:
+        try:
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            file_handler = logging.handlers.RotatingFileHandler(
+                str(log_file), maxBytes=1_000_000, backupCount=3,
+            )
+        except OSError:
+            file_handler = logging.NullHandler()
+        file_handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"
+        ))
+        setattr(file_handler, "_libby_cli_handler", True)
+        logger.addHandler(file_handler)
+    file_handler.setLevel(level)
+
+    if namespace.verbose and not any(
+        getattr(h, "_libby_cli_console", False) for h in logger.handlers
+    ):
+        console = logging.StreamHandler(sys.stderr)
+        console.setLevel(logging.DEBUG)
+        console.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        setattr(console, "_libby_cli_console", True)
+        logger.addHandler(console)
+
 
 def _mk_libby(namespace: argparse.Namespace, config: Dict[str, Any]) -> Libby:
     transport = resolve_transport(namespace.transport, config)
     self_id = namespace.self_id or DEFAULT_SELF_ID
     if transport == "rabbitmq":
+        url = resolve_rabbitmq_url(namespace.rabbitmq_url, config)
+        logger.debug(
+            "connect self_id=%s transport=rabbitmq url=%s", self_id, _redact_url(url)
+        )
         return Libby.rabbitmq(
             self_id=self_id,
-            rabbitmq_url=resolve_rabbitmq_url(namespace.rabbitmq_url, config),
+            rabbitmq_url=url,
             keys=[],
         )
+    address_book = resolve_address_book(config, namespace.addr)
+    bind = namespace.bind or DEFAULT_BIND
+    logger.debug(
+        "connect self_id=%s transport=zmq bind=%s peers=%d",
+        self_id, bind, len(address_book),
+    )
     return Libby.zmq(
         self_id=self_id,
-        bind=namespace.bind or DEFAULT_BIND,
-        address_book=resolve_address_book(config, namespace.addr),
+        bind=bind,
+        address_book=address_book,
         keys=[],
         callback=None,
         discover=True,
@@ -101,6 +199,7 @@ def _emit_list(qualified_names: List[str], *, as_json: bool) -> int:
 
 def _emit_error(qualified: Optional[str], message: str, *, as_json: bool) -> int:
     """Emit an error. JSON: object on stdout. Text: 'libby: ...' on stderr."""
+    logger.warning("error qualified=%s message=%s", qualified, message)
     if as_json:
         out: Dict[str, Any] = {"ok": False, "error": message}
         if qualified:
@@ -211,6 +310,7 @@ def cmd_show(namespace: argparse.Namespace) -> int:
             as_json=namespace.json,
         )
     except Exception as ex:
+        logger.exception("show %s raised", qualified_arg)
         return _emit_error(qualified_arg, str(ex), as_json=namespace.json)
     finally:
         if lib is not None:
@@ -244,6 +344,7 @@ def cmd_list(namespace: argparse.Namespace) -> int:
         qualified_names = [f"{group}.{scope}.{m}" for m in matches]
         return _emit_list(qualified_names, as_json=namespace.json)
     except Exception as ex:
+        logger.exception("list %s raised", namespace.pattern)
         return _emit_error(namespace.pattern, str(ex), as_json=namespace.json)
     finally:
         if lib is not None:
@@ -272,6 +373,7 @@ def cmd_describe(namespace: argparse.Namespace) -> int:
             )
         return _emit_describe(qualified, resp, as_json=namespace.json)
     except Exception as ex:
+        logger.exception("describe %s raised", qualified)
         return _emit_error(qualified, str(ex), as_json=namespace.json)
     finally:
         if lib is not None:
@@ -311,6 +413,7 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
         resp = _peel(lib.rpc(peer, name, {"value": value}, ttl_ms=int(timeout * 1000)))
         return _emit_one(qualified, resp, as_json=namespace.json)
     except Exception as ex:
+        logger.exception("modify %s raised", qualified)
         return _emit_error(qualified, str(ex), as_json=namespace.json)
     finally:
         if lib is not None:
@@ -347,6 +450,7 @@ def cmd_req(namespace: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as ex:
+        logger.exception("req peer=%s key=%s raised", namespace.peer, namespace.key)
         print(f"libby req: {ex}", file=sys.stderr)
         return 2
     finally:
@@ -401,6 +505,7 @@ def cmd_sub(namespace: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         return 130
     except Exception as ex:
+        logger.exception("sub topics=%s raised", namespace.topics)
         print(f"libby sub: {ex}", file=sys.stderr)
         return 2
     finally:
@@ -437,6 +542,14 @@ def build_parser() -> argparse.ArgumentParser:
                             f"or the keyword's timeout_s metadata for modify)")
         p.add_argument("--json", action="store_true",
                        help="Emit JSON to stdout instead of the pretty text format")
+        p.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+                       help=f"Triage log level (default: {DEFAULT_LOG_LEVEL}, "
+                            "or the config's logging.level)")
+        p.add_argument("--log-file",
+                       help=f"Triage log file (default: {DEFAULT_LOG_FILE}, "
+                            "or the config's logging.file)")
+        p.add_argument("-v", "--verbose", action="store_true",
+                       help="Also echo the triage log to stderr")
 
     p_show = sub.add_parser("show", help="Read a keyword's value (% allowed in name)")
     add_common(p_show)
@@ -484,12 +597,37 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     namespace = build_parser().parse_args(argv)
+
     try:
-        return namespace.func(namespace)
+        cli_config = load_cli_config(namespace.config)
     except LibbyError as ex:
         # Core raises LibbyError; the CLI is the boundary that exits
         print(f"libby: {ex}", file=sys.stderr)
         return 2
+
+    _setup_logging(namespace, cli_config)
+
+    argv_display = shlex.join(_redact_argv(argv if argv is not None else sys.argv[1:]))
+    logger.info("invoke cmd=%s argv=%s", namespace.cmd, argv_display)
+
+    start = time.monotonic()
+    try:
+        rc = namespace.func(namespace)
+    except LibbyError as ex:
+        # Core raises LibbyError; the CLI is the boundary that exits
+        logger.warning("cmd=%s failed: %s", namespace.cmd, ex)
+        print(f"libby: {ex}", file=sys.stderr)
+        rc = 2
+    except SystemExit as ex:
+        # Hard validation failures (bad keyword syntax, unreadable config)
+        logger.warning("cmd=%s aborted: %s", namespace.cmd, ex.code)
+        raise
+    except Exception:
+        logger.exception("cmd=%s crashed", namespace.cmd)
+        raise
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info("cmd=%s exit=%s elapsed_ms=%.1f", namespace.cmd, rc, elapsed_ms)
+    return rc
 
 
 if __name__ == "__main__":
