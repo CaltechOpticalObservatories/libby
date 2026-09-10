@@ -15,9 +15,9 @@ class ZmqTransport(Transport):
     - This peer binds a ROUTER at `bind_router`.
     - For each remote peer_id in `address_book`, we lazily create a DEALER
       and set its ZMQ.IDENTITY to *peer_id* so the remote can see who sent.
-    - Incoming frames arrive on ROUTER as:
-         [IDENT, PAYLOAD]  or  [IDENT, b"", PAYLOAD]
-      We pass IDENT as "peer:<peer_id>" to the Protocol callback.
+    - Incoming frames arrive on ROUTER as ``[IDENT, PAYLOAD]`` or
+      ``[IDENT, b"", PAYLOAD]``. We pass IDENT as "peer:<peer_id>" to the
+      Protocol callback.
     - Replies to a request *we* initiated over one of our own DEALER sockets
       arrive on that DEALER socket, not on our ROUTER (that's how ZMQ's
       ROUTER/DEALER pattern works: a reply travels back over whichever
@@ -110,10 +110,10 @@ class ZmqTransport(Transport):
         return True
 
     def send(self, dest: DestStr, frame: bytes) -> None:
-        """
-        dest:
-        - "peer:<peer_id>"  or  "<peer_id>"  -> direct to that peer
-        - "broadcast:*"                      -> to all known peers
+        """Send a frame to a destination.
+
+        - ``"peer:<peer_id>"`` or ``"<peer_id>"`` -> direct to that peer
+        - ``"broadcast:*"`` -> to all known peers
         """
         # 1) broadcast
         if dest.startswith("broadcast:"):
