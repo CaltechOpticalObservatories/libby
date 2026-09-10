@@ -21,10 +21,18 @@ dependencies = [
   "bamboo @ git+https://github.com/CaltechOpticalObservatories/bamboo.git@main"
 ]
 
+[project.optional-dependencies]
+docs = [
+  "sphinx>=7.2",
+  "shibuya>=2024.1.21",
+  "myst-parser>=2.0",
+  "sphinx-autobuild>=2024.2.4",
+]
+
 [project.urls]
-Homepage = "https://example.com"
-Repository = "https://github.com/yourusername/your-repo"
-"Bug Tracker" = "https://github.com/yourusername/your-repo/issues"
+Homepage = "https://caltechopticalobservatories.github.io/libby/"
+Repository = "https://github.com/CaltechOpticalObservatories/libby"
+"Bug Tracker" = "https://github.com/CaltechOpticalObservatories/libby/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

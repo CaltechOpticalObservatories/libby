@@ -203,8 +203,8 @@ class RabbitMQTransport:
 
         Args:
             dest: Destination string, either:
-                  - "peer:<peer_id>" for direct peer-to-peer
-                  - "broadcast:*" for fanout to all peers
+                  - ``"peer:<peer_id>"`` for direct peer-to-peer
+                  - ``"broadcast:*"`` for fanout to all peers
             frame: Raw bytes to send (already serialized by Bamboo)
         """
         if not self._send_channel or not self._send_channel.is_open:

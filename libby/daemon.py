@@ -109,7 +109,7 @@ class LibbyDaemon:
     def config_attributes(cls) -> frozenset[str]:
         """Return config keys mapped directly onto daemon attributes.
 
-        Subclasses may extend the set:
+        Subclasses may extend the set::
 
             CONFIG_ATTRIBUTES = (
                 LibbyDaemon.CONFIG_ATTRIBUTES | {"device_name"}
