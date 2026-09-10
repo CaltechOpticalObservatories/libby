@@ -409,11 +409,6 @@ class LibbyDaemon:
                 units="seconds",
                 description="Seconds since this daemon started.",
             )
-            self.keyword_registry.trigger(
-                "shutdown",
-                action=self.request_stop,
-                description="Gracefully stop this daemon.",
-            )
 
             if self.config_discovery_enabled():
                 try:

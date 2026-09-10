@@ -121,15 +121,31 @@ keyword registry:
 - `keys.describe` — payload `{"name": "..."}` → flat metadata dict.
   Exact lookup; no wildcards.
 
-`LibbyDaemon` subclasses also get three keywords for free, no per-daemon
+`LibbyDaemon` subclasses also get two keywords for free, no per-daemon
 code needed:
 
 - `lasterror` (string, nullable): the most recent `self.logger.error(...)`
   message, so a failure that only got logged locally is still visible to a
   remote `libby show <peer>.lasterror`. Write `null` to clear it.
 - `uptime` (int, seconds): time since this daemon's `start()` was called.
-- `shutdown` (trigger): write any value to gracefully stop the daemon
-  (calls `request_stop()`, same as a SIGINT/SIGTERM).
+
+Stopping a daemon remotely is deliberately not one of them. Whether a peer
+may be shut down over the wire, and what has to happen to the hardware
+first, is a per-daemon decision, so each daemon registers its own
+`shutdown` keyword and decides what it does. `request_stop()` is the
+mechanism to wire it to; it ends a blocking `serve()` call, which runs
+`on_stop()` for hardware teardown:
+
+```python
+def on_start(self, libby):
+    self.keyword_registry.trigger("shutdown",
+                                  action=self.request_stop,
+                                  description="Gracefully stop this daemon.")
+```
+
+A daemon needing a guard (refusing while a stage is moving, say) or a
+specific teardown order calls its own method instead, and reaches
+`request_stop()` when it is ready.
 
 ## Client library
 

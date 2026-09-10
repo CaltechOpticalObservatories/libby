@@ -83,12 +83,21 @@ class ClientIntegrationTests(unittest.TestCase):
 class ShutdownKeywordTests(unittest.TestCase):
     """Separate daemon: shutdown stops it, so it can't share the class fixture above."""
 
-    def test_shutdown_trigger_stops_the_daemon(self):
+    def test_daemon_registered_shutdown_trigger_stops_the_daemon(self):
         class _TestDaemon(LibbyDaemon):
+            """Daemon that wires its own shutdown keyword to request_stop."""
+
             peer_id = "shutdowntest"
             group_id = "hsfei"
             transport = "rabbitmq"
             discovery_enabled = False
+
+            def on_start(self, libby):
+                self.keyword_registry.trigger(
+                    "shutdown",
+                    action=self.request_stop,
+                    description="Gracefully stop this daemon.",
+                )
 
         daemon = _TestDaemon()
         serve_thread = threading.Thread(target=daemon.serve, daemon=True)
