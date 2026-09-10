@@ -2,7 +2,7 @@
 import unittest
 
 from libby.errors import KeywordNameError
-from libby.naming import coerce_value, parse_keyword, peer_id
+from libby.naming import coerce_value, parse_keyword, peer_id, qualified_peer_id
 
 
 class ParseKeywordTests(unittest.TestCase):
@@ -41,6 +41,23 @@ class PeerIdTests(unittest.TestCase):
         # from a daemon's own peer_id/group_id config fields (qualified_peer_id):
         # see plans/peer_group_naming_design.md.
         self.assertEqual(peer_id("hsfei", "adc"), "hsfei.adc")
+
+    def test_case_insensitive(self):
+        # A daemon configured with mixed/upper case and a client addressing
+        # it in a different case must agree on the same wire identity.
+        self.assertEqual(peer_id("HSFEI", "ADC"), peer_id("hsfei", "adc"))
+        self.assertEqual(peer_id("HsFei", "AdC"), "hsfei.adc")
+
+
+class QualifiedPeerIdTests(unittest.TestCase):
+    def test_no_group_id_returns_lowercased_peer_id(self):
+        self.assertEqual(qualified_peer_id("ADC"), "adc")
+
+    def test_joins_and_lowercases_both(self):
+        self.assertEqual(qualified_peer_id("ADC", "HSFEI"), "hsfei.adc")
+
+    def test_empty_group_id_treated_as_none(self):
+        self.assertEqual(qualified_peer_id("ADC", ""), "adc")
 
 
 class CoerceValueTests(unittest.TestCase):

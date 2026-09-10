@@ -13,9 +13,11 @@ libby describe <group>.<scope>.<name>     # metadata for one keyword (exact name
 `group_id`, `scope` is its `peer_id` (e.g. `peer_id: adc, group_id: hsfei` in
 the daemon's config is addressed as `hsfei.adc`). `Libby.rabbitmq()` /
 `Libby.zmq()` build the actual wire identity from those two fields via
-`libby.naming.qualified_peer_id` — a daemon config never needs to concatenate
-them by hand. Cross-peer fanout is not supported. `req` and `sub` are kept
-for raw RPC / topic debugging.
+`libby.naming.qualified_peer_id`, so a daemon config never needs to
+concatenate them by hand. `group`/`scope` are case-insensitive (`HSFEI.ADC`
+and `hsfei.adc` reach the same peer); the keyword name isn't. Cross-peer
+fanout is not supported. `req` and `sub` are kept for raw RPC / topic
+debugging.
 
 ## Examples
 
