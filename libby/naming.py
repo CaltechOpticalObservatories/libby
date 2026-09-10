@@ -1,4 +1,4 @@
-"""Keyword-name parsing, value coercion, and peer/group naming - transport-agnostic."""
+"""Keyword-name parsing, value coercion, and peer/group naming (transport-agnostic)."""
 from __future__ import annotations
 
 from typing import Any, Optional, Tuple
@@ -38,16 +38,21 @@ def qualified_peer_id(peer_id: str, group_id: Optional[str] = None) -> str:
     used on the wire (a routing key, a DEALER identity, or any future
     transport's own addressing) includes the group. See
     plans/peer_group_naming_design.md.
+
+    Lowercases both inputs, so addressing is case-insensitive without either
+    side (daemon or client) needing its own normalization: both go through
+    this one function to build the identity they route on.
     """
+    peer_id = peer_id.lower()
     if group_id:
-        return f"{group_id}.{peer_id}"
+        return f"{group_id.lower()}.{peer_id}"
     return peer_id
 
 
 def peer_id(group: str, scope: str) -> str:
     """Map a keyword's group/scope to the daemon peer id.
 
-    `scope` is the peer_id, `group` is its group_id - the same pair
+    `scope` is the peer_id, `group` is its group_id: the same pair
     `qualified_peer_id` joins on the daemon side, so client and daemon
     always agree on the wire identity by construction. See
     plans/peer_group_naming_design.md.
