@@ -101,6 +101,7 @@ class LibbyDaemon:
         self._started = False
         self.libby: Optional[Libby] = None
         self._last_error: Optional[str] = None
+        self._start_time: Optional[float] = None
         self.logger = logging.getLogger(type(self).__name__)
         self._ensure_last_error_handler()
 
@@ -387,6 +388,7 @@ class LibbyDaemon:
             return
 
         self._stop_event.clear()
+        self._start_time = time.monotonic()
         try:
             self.libby = self.build_libby()
             self._register_services(self.services)
@@ -400,6 +402,17 @@ class LibbyDaemon:
                     "Most recent ERROR-level log message from this daemon; "
                     "write null to clear."
                 ),
+            )
+            self.keyword_registry.int(
+                "uptime",
+                getter=self._uptime_s,
+                units="seconds",
+                description="Seconds since this daemon started.",
+            )
+            self.keyword_registry.trigger(
+                "shutdown",
+                action=self.request_stop,
+                description="Gracefully stop this daemon.",
             )
 
             if self.config_discovery_enabled():
@@ -488,6 +501,12 @@ class LibbyDaemon:
         if value is not None:
             raise ValueError("lasterror is read-only except to clear it (write null)")
         self._last_error = None
+
+    def _uptime_s(self) -> int:
+        """Getter for the uptime keyword: whole seconds since start()."""
+        if self._start_time is None:
+            return 0
+        return int(time.monotonic() - self._start_time)
 
     def _service_adapter(self, fn: RPCHandler):
         def adapter(user_payload: dict, _ctx: dict) -> dict:
