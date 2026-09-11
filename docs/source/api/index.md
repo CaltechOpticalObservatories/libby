@@ -56,6 +56,12 @@ Generated from docstrings in the `libby` package.
    :show-inheritance:
 ```
 
+```{eval-rst}
+.. automodule:: libby.expression
+   :members:
+   :show-inheritance:
+```
+
 ## Responses and errors
 
 ```{eval-rst}
