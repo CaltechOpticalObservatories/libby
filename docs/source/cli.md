@@ -3,10 +3,11 @@
 `libby` is the command-line front for keyword peers. Verbs:
 
 ```
-libby show     <group>.<scope>.<name>     # read a keyword (% wildcard in name)
-libby modify   <group>.<scope>.<name>=V   # write a keyword (exact name)
-libby list     <group>.<scope>.<pattern>  # list keyword names (% wildcard in name)
-libby describe <group>.<scope>.<name>     # metadata for one keyword (exact name)
+libby show     <group>.<scope>.<name>          # read a keyword (% wildcard in name)
+libby modify   <group>.<scope>.<name>=V        # write a keyword (exact name)
+libby list     <group>.<scope>.<pattern>       # list keyword names (% wildcard in name)
+libby describe <group>.<scope>.<name>          # metadata for one keyword (exact name)
+libby waitfor  '$<group>.<scope>.<name> > V'   # block until a comparison holds
 ```
 
 `<group>.<scope>` is the address of one peer: `group` is that peer's
@@ -49,6 +50,12 @@ hsfei.pickoff.positionvalue:
 $ libby list hsfei.pickoff.%min
 hsfei.pickoff.hardmin
 hsfei.pickoff.softmin
+
+$ libby waitfor '$hsfei.pickoff.ismoving == false' --timeout 30
+hsfei.pickoff.ismoving = False (satisfied after 4.2s)
+
+$ libby waitfor '$hsfei.pickoff.positionvalue > 15' --timeout 5    # exit code 4
+libby: $hsfei.pickoff.positionvalue > 15: still false after 5.0s; hsfei.pickoff.positionvalue = 11.0
 ```
 
 Add `--json` to any verb for machine-readable output (objects for `show` /
@@ -64,6 +71,40 @@ for `list`).
 - The CLI consults `keys.describe` for the keyword's `timeout_s` metadata
   before sending the modify, so slow operations (e.g. stage motion) get a
   longer wait automatically. `--timeout <s>` overrides.
+
+## waitfor
+
+`waitfor` blocks until a keyword
+satisfies a comparison. Because libby daemons don't broadcast keyword changes,
+it polls the keyword over RPC rather than waiting on a monitor — `--poll` sets
+the interval (default 0.1s).
+
+```
+libby waitfor '$<group>.<scope>.<name> <op> <value>'
+```
+
+- `<op>` is one of `==`, `!=`, `<`, `<=`, `>`, `>=`. Quote the whole
+  expression so your shell doesn't eat the `$`, `<`, or `>`.
+- Keyword references are `$`-prefixed, as in KTL. `-s/--service
+  <group>.<scope>` sets a default peer so the expression can name a keyword
+  bare: `libby waitfor '$ismoving == false' -s hsfei.pickoff`.
+- KTL writes conditions parenthesized (`'($foo.BAR > 15)'`); that form works
+  too, and so does putting the keyword on the right (`'15 < $foo.bar.baz'`).
+- Values coerce like a `modify` value — `false` is a bool, `15` an int,
+  `null` is `None`. Quote to keep a value a string: `'$status == "15"'`.
+  A value only *needs* quoting if it contains whitespace, starts with `$`, or
+  looks like an operator.
+- String comparisons are case-insensitive, matching `ktl.waitFor`'s
+  `case=False` default. `--case` compares exactly.
+- `--timeout` here is the **total** time to wait, not the per-request RPC
+  timeout, and it defaults to waiting indefinitely. Exit code is 0 if the
+  comparison came true, 4 if the timeout expired with it still false.
+- A keyword that has no value yet (a nullable one the daemon hasn't populated)
+  counts as "not true yet" and the wait continues, as in KTL. A rejected read
+  — unknown or write-only keyword — fails immediately, since no amount of
+  waiting resolves it.
+
+`and` / `or` / `not`, arithmetic, and multi-keyword expressions are not supported yet.
 
 ## Config
 
@@ -102,3 +143,4 @@ overrides built-in defaults. Flags must appear *after* the subcommand
 | 1 | argument / parse error |
 | 2 | RPC or response error (e.g. read-only, unknown keyword, transport failure) |
 | 3 | wildcard `list` / `show` matched no keywords |
+| 4 | `waitfor` timed out with the comparison still false |

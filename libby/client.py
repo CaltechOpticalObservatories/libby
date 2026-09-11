@@ -7,6 +7,8 @@ and key, calls ``Libby.rpc``, and turns the reply into a value or a
 """
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 from .config_resolve import (
@@ -16,13 +18,35 @@ from .config_resolve import (
     resolve_rabbitmq_url,
     resolve_transport,
 )
-from .errors import LibbyError
+from .errors import LibbyError, LibbyTimeout
+from .expression import parse_comparison
 from .libby import Libby
 from .naming import parse_keyword, peer_id
 from .response import unwrap
 
 DEFAULT_SELF_ID = "libby-client"
 DEFAULT_TIMEOUT_S = 3.0
+DEFAULT_POLL_S = 0.1
+
+
+@dataclass(frozen=True)
+class WaitResult:
+    """What a :meth:`Client.wait_for_result` wait observed before it stopped."""
+
+    satisfied: bool
+    """True if the expression became true; False if the timeout expired."""
+
+    keyword: str
+    """Qualified name of the keyword the expression polled."""
+
+    value: Any
+    """Last value read. ``None`` if no read ever succeeded."""
+
+    elapsed_s: float
+    """Wall-clock seconds spent waiting."""
+
+    polls: int
+    """Number of reads attempted."""
 
 
 class Client:
@@ -114,6 +138,106 @@ class Client:
             # Best-effort: a missing/unreadable describe just falls back
             pass
         return DEFAULT_TIMEOUT_S
+
+    def wait_for(
+        self,
+        expression: str,
+        timeout: Optional[float] = None,
+        *,
+        service: Optional[str] = None,
+        case: bool = False,
+        poll_s: float = DEFAULT_POLL_S,
+        rpc_timeout_s: float = DEFAULT_TIMEOUT_S,
+    ) -> bool:
+        """Block until ``expression`` is true; return whether it became true.
+
+        ``expression`` is one comparison between a ``$``-prefixed keyword and
+        a literal — see :mod:`libby.expression` for the accepted syntax::
+
+            client.wait_for('$hsfei.pickoff.positionvalue > 15', timeout=5)
+            client.wait_for('$ismoving == false', 30, service='hsfei.pickoff')
+
+        Args:
+            expression: The condition to wait on.
+            timeout: Seconds to wait before giving up. ``None`` waits
+                indefinitely; ``0`` evaluates once and returns.
+            service: Default ``<group>.<scope>``, so the expression can name
+                a keyword bare.
+            case: Compare strings case-sensitively.
+            poll_s: Seconds between reads.
+            rpc_timeout_s: Per-read RPC timeout.
+
+        Returns:
+            True if the expression became true, False if the timeout expired
+            with it still false.
+
+        Raises:
+            ExpressionError: the expression is malformed, or its two sides
+                cannot be compared at all.
+            KeywordError: the daemon rejected the read (e.g. unknown or
+                write-only keyword) — a condition waiting cannot resolve.
+        """
+        return self.wait_for_result(
+            expression,
+            timeout,
+            service=service,
+            case=case,
+            poll_s=poll_s,
+            rpc_timeout_s=rpc_timeout_s,
+        ).satisfied
+
+    def wait_for_result(
+        self,
+        expression: str,
+        timeout: Optional[float] = None,
+        *,
+        service: Optional[str] = None,
+        case: bool = False,
+        poll_s: float = DEFAULT_POLL_S,
+        rpc_timeout_s: float = DEFAULT_TIMEOUT_S,
+    ) -> WaitResult:
+        """Like :meth:`wait_for`, but report what the wait observed.
+
+        Same arguments and same exceptions; returns a :class:`WaitResult`
+        instead of a bool, for callers that want to show the value the
+        expression settled on (or timed out against).
+        """
+        comparison = parse_comparison(expression, service=service)
+        start = time.monotonic()
+        deadline = None if timeout is None else start + timeout
+        value: Any = None
+        polls = 0
+
+        while True:
+            polls += 1
+            try:
+                value = self.get(comparison.keyword, timeout_s=rpc_timeout_s)
+            except LibbyTimeout:
+                # Transient: a restarting daemon shouldn't end a wait early.
+                # Keep the last value and retry until the caller's timeout.
+                pass
+            else:
+                if comparison.evaluate(value, case=case):
+                    return WaitResult(
+                        satisfied=True,
+                        keyword=comparison.keyword,
+                        value=value,
+                        elapsed_s=time.monotonic() - start,
+                        polls=polls,
+                    )
+
+            now = time.monotonic()
+            if deadline is not None and now >= deadline:
+                return WaitResult(
+                    satisfied=False,
+                    keyword=comparison.keyword,
+                    value=value,
+                    elapsed_s=now - start,
+                    polls=polls,
+                )
+            nap = poll_s if deadline is None else min(poll_s, deadline - now)
+            if nap > 0:
+                time.sleep(nap)
 
     def close(self) -> None:
         """Disconnect the underlying transport."""

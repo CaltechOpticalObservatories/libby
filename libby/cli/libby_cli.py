@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
+from libby.client import DEFAULT_POLL_S, Client, WaitResult
 from libby.config_resolve import (
     DEFAULT_BIND,
     DEFAULT_CONFIG_PATH,
@@ -23,6 +24,7 @@ from libby.config_resolve import (
     resolve_transport,
 )
 from libby.errors import KeywordError, LibbyError
+from libby.expression import parse_comparison
 from libby.libby import Libby
 from libby.naming import coerce_value, parse_keyword, peer_id
 from libby.response import unwrap
@@ -32,6 +34,10 @@ DEFAULT_TIMEOUT_S = 3.0
 
 DEFAULT_LOG_FILE = Path.home() / ".libby" / "cli.log"
 DEFAULT_LOG_LEVEL = "WARNING"
+
+# waitfor's own exit code: the reads worked, the condition never came true.
+# Distinct from 2 (error) so a script can tell the two apart.
+RC_WAIT_TIMEOUT = 4
 
 # Triage log — separate from stdout/stderr, which remain reserved for
 # command output (including machine-parseable --json). Off by default
@@ -236,6 +242,35 @@ def _emit_describe(qualified: str, resp: Dict[str, Any], *, as_json: bool) -> in
     return 0
 
 
+def _fmt_elapsed(seconds: float) -> str:
+    """Format a wait duration. Sub-second waits get a second decimal, so a
+    0.05s wait doesn't round to '0.1s' and look like it overran its timeout."""
+    return f"{seconds:.2f}s" if seconds < 1 else f"{seconds:.1f}s"
+
+
+def _emit_wait(expression: str, result: WaitResult, *, as_json: bool) -> int:
+    """Render a waitfor outcome. Return exit code (0 satisfied, 4 timed out)."""
+    if as_json:
+        print(json.dumps({
+            "ok":        True,
+            "expression": expression,
+            "satisfied": result.satisfied,
+            "qualified": result.keyword,
+            "value":     result.value,
+            "elapsed_s": round(result.elapsed_s, 3),
+            "polls":     result.polls,
+        }, indent=2))
+        return 0 if result.satisfied else RC_WAIT_TIMEOUT
+    if result.satisfied:
+        print(f"{result.keyword} = {result.value} "
+              f"(satisfied after {_fmt_elapsed(result.elapsed_s)})")
+        return 0
+    print(f"libby: {expression}: still false after "
+          f"{_fmt_elapsed(result.elapsed_s)}; "
+          f"{result.keyword} = {result.value}", file=sys.stderr)
+    return RC_WAIT_TIMEOUT
+
+
 def _modify_timeout(lib: Libby, peer: str, name: str, user_timeout: Optional[float]) -> float:
     """Resolve the timeout for a modify call.
 
@@ -423,6 +458,44 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
                 pass
 
 
+def cmd_waitfor(namespace: argparse.Namespace) -> int:
+    """Block until a keyword comparison holds, or the timeout expires."""
+    config = load_cli_config(namespace.config)
+
+    # Parse before connecting: a typo shouldn't need a reachable broker.
+    try:
+        parse_comparison(namespace.expression, service=namespace.service)
+    except LibbyError as ex:
+        return _emit_error(None, str(ex), as_json=namespace.json)
+
+    lib: Optional[Libby] = None
+    try:
+        lib = _mk_libby(namespace, config)
+        result = Client(lib).wait_for_result(
+            namespace.expression,
+            namespace.timeout,
+            service=namespace.service,
+            case=namespace.case,
+            poll_s=namespace.poll,
+        )
+        logger.info(
+            "waitfor %s satisfied=%s elapsed_s=%.1f polls=%d",
+            namespace.expression, result.satisfied, result.elapsed_s, result.polls,
+        )
+        return _emit_wait(namespace.expression, result, as_json=namespace.json)
+    except KeyboardInterrupt:
+        return 130
+    except Exception as ex:
+        logger.exception("waitfor %s raised", namespace.expression)
+        return _emit_error(namespace.expression, str(ex), as_json=namespace.json)
+    finally:
+        if lib is not None:
+            try:
+                lib.stop()
+            except Exception:
+                pass
+
+
 def _parse_json(text: Optional[str]) -> Dict[str, Any]:
     if not text:
         return {}
@@ -578,6 +651,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_modify.add_argument("value", nargs="?",
                           help="Value (if not using = form)")
     p_modify.set_defaults(func=cmd_modify)
+
+    p_waitfor = sub.add_parser(
+        "waitfor",
+        help="Block until a keyword comparison is true",
+        description=(
+            "Poll a keyword until a comparison holds. For this verb --timeout "
+            "is the total time to wait (default: wait indefinitely), not the "
+            "per-request RPC timeout. Exits 4 if the timeout expires with the "
+            "comparison still false."
+        ),
+    )
+    add_common(p_waitfor)
+    p_waitfor.add_argument(
+        "expression",
+        help="'$<group>.<scope>.<name> <op> <value>'; op is ==, !=, <, <=, >, >=",
+    )
+    p_waitfor.add_argument("-s", "--service", metavar="<group>.<scope>",
+                           help="Default peer, so the expression can name a "
+                                "keyword bare (e.g. '$ismoving == false')")
+    p_waitfor.add_argument("--case", action="store_true",
+                           help="Compare strings case-sensitively "
+                                "(default: case-insensitive)")
+    p_waitfor.add_argument("--poll", type=float, default=DEFAULT_POLL_S,
+                           help=f"Seconds between reads (default: {DEFAULT_POLL_S})")
+    p_waitfor.set_defaults(func=cmd_waitfor)
 
     p_req = sub.add_parser("req", help="Raw RPC: send a keyed request and print the response")
     add_common(p_req)
