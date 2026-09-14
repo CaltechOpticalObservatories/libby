@@ -4,7 +4,7 @@
 import-and-use counterpart to the CLI. Where the CLI opens a connection per
 command, a `Client` holds one for its lifetime, so a script can touch many
 keywords cheaply. It addresses keywords by the same qualified
-`<group>.<scope>.<name>` and reuses the CLI's `cli_config.yaml`.
+`<group>.<daemon>.<keyword>` and reuses the CLI's `cli_config.yaml`.
 
 ```python
 from libby import Client
