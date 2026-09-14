@@ -551,16 +551,17 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("-v", "--verbose", action="store_true",
                        help="Also echo the triage log to stderr")
 
-    p_show = sub.add_parser("show", help="Read a keyword's value (% allowed in name)")
+    # argparse %-formats help strings, so a literal % has to be escaped
+    p_show = sub.add_parser("show", help="Read a keyword's value (%% allowed in name)")
     add_common(p_show)
     p_show.add_argument("keyword",
-                        help="<group>.<scope>.<name> (% allowed in name segment)")
+                        help="<group>.<scope>.<name> (%% allowed in name segment)")
     p_show.set_defaults(func=cmd_show)
 
     p_list = sub.add_parser("list", help="List keyword names matching a pattern")
     add_common(p_list)
     p_list.add_argument("pattern",
-                        help="<group>.<scope>.<name-pattern> (% wildcard in name)")
+                        help="<group>.<scope>.<name-pattern> (%% wildcard in name)")
     p_list.set_defaults(func=cmd_list)
 
     p_describe = sub.add_parser("describe", help="Show metadata for a keyword")
