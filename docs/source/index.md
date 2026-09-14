@@ -9,9 +9,10 @@ with pluggable transports (ZMQ or RabbitMQ). It gives you:
 - **`LibbyDaemon`** — a base class for peers: lifecycle, discovery, RPC
   handlers, and pub/sub, in a few overrides.
 - **`Client`** — a long-lived, in-process handle for reading and writing
-  keywords from scripts.
+  keywords from scripts, and for blocking on a keyword condition with
+  `wait_for` (libby's `ktl.waitFor`).
 - **`libby` CLI** — a command-line front end for keyword peers
-  (`show` / `modify` / `list` / `describe`).
+  (`show` / `modify` / `list` / `describe` / `waitfor`).
 
 ```{toctree}
 :maxdepth: 2

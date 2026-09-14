@@ -18,6 +18,10 @@ class KeywordNameError(LibbyError):
     """A qualified keyword name is malformed."""
 
 
+class ExpressionError(LibbyError):
+    """A ``wait_for`` expression is malformed, or cannot be evaluated."""
+
+
 class LibbyTimeout(LibbyError):
     """An RPC request was not delivered, or got no response, within its TTL."""
 
