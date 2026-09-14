@@ -36,8 +36,8 @@ class WaitResult:
     satisfied: bool
     """True if the expression became true; False if the timeout expired."""
 
-    keyword: str
-    """Qualified name of the keyword the expression polled."""
+    address: str
+    """``<group>.<daemon>.<keyword>`` address the expression polled."""
 
     value: Any
     """Last value read. ``None`` if no read ever succeeded."""
@@ -144,7 +144,7 @@ class Client:
         expression: str,
         timeout: Optional[float] = None,
         *,
-        service: Optional[str] = None,
+        daemon: Optional[str] = None,
         case: bool = False,
         poll_s: float = DEFAULT_POLL_S,
         rpc_timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -155,14 +155,14 @@ class Client:
         a literal — see :mod:`libby.expression` for the accepted syntax::
 
             client.wait_for('$hsfei.pickoff.positionvalue > 15', timeout=5)
-            client.wait_for('$ismoving == false', 30, service='hsfei.pickoff')
+            client.wait_for('$ismoving == false', 30, daemon='hsfei.pickoff')
 
         Args:
             expression: The condition to wait on.
             timeout: Seconds to wait before giving up. ``None`` waits
                 indefinitely; ``0`` evaluates once and returns.
-            service: Default ``<group>.<scope>``, so the expression can name
-                a keyword bare.
+            daemon: Default ``<group>.<daemon>``, so the expression can
+                name a keyword bare.
             case: Compare strings case-sensitively.
             poll_s: Seconds between reads.
             rpc_timeout_s: Per-read RPC timeout.
@@ -180,7 +180,7 @@ class Client:
         return self.wait_for_result(
             expression,
             timeout,
-            service=service,
+            daemon=daemon,
             case=case,
             poll_s=poll_s,
             rpc_timeout_s=rpc_timeout_s,
@@ -191,7 +191,7 @@ class Client:
         expression: str,
         timeout: Optional[float] = None,
         *,
-        service: Optional[str] = None,
+        daemon: Optional[str] = None,
         case: bool = False,
         poll_s: float = DEFAULT_POLL_S,
         rpc_timeout_s: float = DEFAULT_TIMEOUT_S,
@@ -202,7 +202,7 @@ class Client:
         instead of a bool, for callers that want to show the value the
         expression settled on (or timed out against).
         """
-        comparison = parse_comparison(expression, service=service)
+        comparison = parse_comparison(expression, daemon=daemon)
         start = time.monotonic()
         deadline = None if timeout is None else start + timeout
         value: Any = None
@@ -211,7 +211,7 @@ class Client:
         while True:
             polls += 1
             try:
-                value = self.get(comparison.keyword, timeout_s=rpc_timeout_s)
+                value = self.get(comparison.address, timeout_s=rpc_timeout_s)
             except LibbyTimeout:
                 # Transient: a restarting daemon shouldn't end a wait early.
                 # Keep the last value and retry until the caller's timeout.
@@ -220,7 +220,7 @@ class Client:
                 if comparison.evaluate(value, case=case):
                     return WaitResult(
                         satisfied=True,
-                        keyword=comparison.keyword,
+                        address=comparison.address,
                         value=value,
                         elapsed_s=time.monotonic() - start,
                         polls=polls,
@@ -230,7 +230,7 @@ class Client:
             if deadline is not None and now >= deadline:
                 return WaitResult(
                     satisfied=False,
-                    keyword=comparison.keyword,
+                    address=comparison.address,
                     value=value,
                     elapsed_s=now - start,
                     polls=polls,

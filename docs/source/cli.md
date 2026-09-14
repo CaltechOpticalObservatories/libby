@@ -3,11 +3,11 @@
 `libby` is the command-line front for keyword peers. Verbs:
 
 ```
-libby show     <group>.<scope>.<name>          # read a keyword (% wildcard in name)
-libby modify   <group>.<scope>.<name>=V        # write a keyword (exact name)
-libby list     <group>.<scope>.<pattern>       # list keyword names (% wildcard in name)
-libby describe <group>.<scope>.<name>          # metadata for one keyword (exact name)
-libby waitfor  '$<group>.<scope>.<name> > V'   # block until a comparison holds
+libby show     <group>.<daemon>.<keyword>         # read a keyword (% wildcard in keyword)
+libby modify   <group>.<daemon>.<keyword>=V       # write a keyword (exact keyword)
+libby list     <group>.<daemon>.<pattern>         # list keyword names (% wildcard in keyword)
+libby describe <group>.<daemon>.<keyword>         # metadata for one keyword (exact keyword)
+libby waitfor  '$<group>.<daemon>.<keyword> > V'  # block until a comparison holds
 ```
 
 `<group>.<scope>` is the address of one peer: `group` is that peer's
@@ -80,14 +80,14 @@ it polls the keyword over RPC rather than waiting on a monitor — `--poll` sets
 the interval (default 0.1s).
 
 ```
-libby waitfor '$<group>.<scope>.<name> <op> <value>'
+libby waitfor '$<group>.<daemon>.<keyword> <op> <value>'
 ```
 
 - `<op>` is one of `==`, `!=`, `<`, `<=`, `>`, `>=`. Quote the whole
   expression so your shell doesn't eat the `$`, `<`, or `>`.
-- Keyword references are `$`-prefixed, as in KTL. `-s/--service
-  <group>.<scope>` sets a default peer so the expression can name a keyword
-  bare: `libby waitfor '$ismoving == false' -s hsfei.pickoff`.
+- Keyword references are `$`-prefixed, as in KTL. `-d/--daemon
+  <group>.<daemon>` sets a default daemon so the expression can name a
+  keyword bare: `libby waitfor '$ismoving == false' -d hsfei.pickoff`.
 - KTL writes conditions parenthesized (`'($foo.BAR > 15)'`); that form works
   too, and so does putting the keyword on the right (`'15 < $foo.bar.baz'`).
 - Values coerce like a `modify` value — `false` is a bool, `15` an int,

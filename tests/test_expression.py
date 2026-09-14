@@ -65,20 +65,20 @@ class ParseComparisonTests(unittest.TestCase):
             Comparison("hsfei.pickoff.softmax", "!=", 5),
         )
 
-    def test_bare_name_resolves_against_a_default_service(self):
+    def test_bare_keyword_resolves_against_a_default_daemon(self):
         self.assertEqual(
-            parse_comparison("$ismoving == false", service="hsfei.pickoff"),
+            parse_comparison("$ismoving == false", daemon="hsfei.pickoff"),
             Comparison("hsfei.pickoff.ismoving", "==", False),
         )
 
-    def test_qualified_name_ignores_the_default_service(self):
+    def test_qualified_address_ignores_the_default_daemon(self):
         self.assertEqual(
             parse_comparison("$hsfei.adc.ismoving == false",
-                             service="hsfei.pickoff").keyword,
+                             daemon="hsfei.pickoff").address,
             "hsfei.adc.ismoving",
         )
 
-    def test_bare_name_without_a_service_is_rejected(self):
+    def test_bare_keyword_without_a_daemon_is_rejected(self):
         with self.assertRaises(ExpressionError):
             parse_comparison("$ismoving == false")
 
@@ -86,10 +86,10 @@ class ParseComparisonTests(unittest.TestCase):
         with self.assertRaises(ExpressionError):
             parse_comparison("$pickoff.ismoving == false")
 
-    def test_malformed_service_is_rejected(self):
-        for service in ("hsfei", "hsfei.pickoff.extra", "hsfei."):
+    def test_malformed_daemon_is_rejected(self):
+        for daemon in ("hsfei", "hsfei.pickoff.extra", "hsfei."):
             with self.assertRaises(ExpressionError):
-                parse_comparison("$ismoving == false", service=service)
+                parse_comparison("$ismoving == false", daemon=daemon)
 
     def test_wildcard_in_keyword_is_rejected(self):
         with self.assertRaises(KeywordNameError):

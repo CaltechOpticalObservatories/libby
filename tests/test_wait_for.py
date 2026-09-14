@@ -8,7 +8,7 @@ import unittest
 from libby.client import Client
 from libby.errors import ExpressionError, KeywordError, LibbyTimeout
 
-KEYWORD = "hsfei.pickoff.positionvalue"
+ADDRESS = "hsfei.pickoff.positionvalue"
 
 
 class _FakeLibby:
@@ -37,20 +37,20 @@ def _client(values):
 class WaitForTests(unittest.TestCase):
     def test_already_true_returns_immediately(self):
         client = _client([79.0])
-        self.assertTrue(client.wait_for(f"${KEYWORD} > 15", 1.0, poll_s=0.01))
+        self.assertTrue(client.wait_for(f"${ADDRESS} > 15", 1.0, poll_s=0.01))
         self.assertEqual(len(client._libby.calls), 1)
 
     def test_becomes_true_after_a_few_polls(self):
         client = _client([1.0, 5.0, 20.0])
-        result = client.wait_for_result(f"${KEYWORD} > 15", 2.0, poll_s=0.01)
+        result = client.wait_for_result(f"${ADDRESS} > 15", 2.0, poll_s=0.01)
         self.assertTrue(result.satisfied)
         self.assertEqual(result.value, 20.0)
         self.assertEqual(result.polls, 3)
-        self.assertEqual(result.keyword, KEYWORD)
+        self.assertEqual(result.address, ADDRESS)
 
     def test_timeout_returns_false_with_the_last_value_seen(self):
         client = _client([1.0])
-        result = client.wait_for_result(f"${KEYWORD} > 15", 0.05, poll_s=0.01)
+        result = client.wait_for_result(f"${ADDRESS} > 15", 0.05, poll_s=0.01)
         self.assertFalse(result.satisfied)
         self.assertEqual(result.value, 1.0)
         self.assertGreaterEqual(result.elapsed_s, 0.05)
@@ -58,26 +58,26 @@ class WaitForTests(unittest.TestCase):
 
     def test_zero_timeout_evaluates_exactly_once(self):
         client = _client([1.0])
-        self.assertFalse(client.wait_for(f"${KEYWORD} > 15", 0))
+        self.assertFalse(client.wait_for(f"${ADDRESS} > 15", 0))
         self.assertEqual(len(client._libby.calls), 1)
 
-    def test_addresses_the_peer_the_keyword_names(self):
+    def test_addresses_the_daemon_named_in_the_address(self):
         client = _client([79.0])
-        client.wait_for(f"${KEYWORD} > 15", 1.0)
+        client.wait_for(f"${ADDRESS} > 15", 1.0)
         peer, key, payload, _ttl = client._libby.calls[0]
         self.assertEqual(peer, "hsfei.pickoff")
         self.assertEqual(key, "positionvalue")
         self.assertEqual(payload, {})
 
-    def test_default_service_addresses_the_same_peer(self):
+    def test_default_daemon_addresses_the_same_daemon(self):
         client = _client([79.0])
-        client.wait_for("$positionvalue > 15", 1.0, service="hsfei.pickoff")
+        client.wait_for("$positionvalue > 15", 1.0, daemon="hsfei.pickoff")
         peer, key, _payload, _ttl = client._libby.calls[0]
         self.assertEqual((peer, key), ("hsfei.pickoff", "positionvalue"))
 
     def test_rpc_timeout_applies_per_read_not_to_the_whole_wait(self):
         client = _client([79.0])
-        client.wait_for(f"${KEYWORD} > 15", 600.0, rpc_timeout_s=2.0)
+        client.wait_for(f"${ADDRESS} > 15", 600.0, rpc_timeout_s=2.0)
         self.assertEqual(client._libby.calls[0][3], 2000)
 
     def test_strings_compare_case_insensitively_by_default(self):
@@ -100,13 +100,13 @@ class WaitForTests(unittest.TestCase):
 
     def test_transient_rpc_timeout_is_retried(self):
         client = _client([LibbyTimeout("no response"), 79.0])
-        result = client.wait_for_result(f"${KEYWORD} > 15", 2.0, poll_s=0.01)
+        result = client.wait_for_result(f"${ADDRESS} > 15", 2.0, poll_s=0.01)
         self.assertTrue(result.satisfied)
         self.assertEqual(result.polls, 2)
 
     def test_unreachable_peer_times_out_rather_than_raising(self):
         client = _client([LibbyTimeout("no response")])
-        result = client.wait_for_result(f"${KEYWORD} > 15", 0.05, poll_s=0.01)
+        result = client.wait_for_result(f"${ADDRESS} > 15", 0.05, poll_s=0.01)
         self.assertFalse(result.satisfied)
         self.assertIsNone(result.value)
 
@@ -119,12 +119,12 @@ class WaitForTests(unittest.TestCase):
     def test_uncomparable_value_raises_rather_than_waiting_it_out(self):
         client = _client(["ready"])
         with self.assertRaises(ExpressionError):
-            client.wait_for(f"${KEYWORD} > 15", 1.0)
+            client.wait_for(f"${ADDRESS} > 15", 1.0)
 
     def test_null_value_keeps_waiting_then_succeeds(self):
         # A nullable keyword not yet populated is 'not true yet', not an error.
         client = _client([None, None, 79.0])
-        result = client.wait_for_result(f"${KEYWORD} > 15", 2.0, poll_s=0.01)
+        result = client.wait_for_result(f"${ADDRESS} > 15", 2.0, poll_s=0.01)
         self.assertTrue(result.satisfied)
         self.assertEqual(result.polls, 3)
 

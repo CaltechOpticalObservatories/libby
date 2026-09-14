@@ -49,12 +49,12 @@ except KeywordError as ex:
 if client.wait_for("$hsfei.pickoff.positionvalue > 15", timeout=5):
     print("pickoff exceeded 15 within 5 seconds")
 
-client.wait_for("$ismoving == false", 30, service="hsfei.pickoff")
+client.wait_for("$ismoving == false", 30, daemon="hsfei.pickoff")
 ```
 
 `timeout` is seconds, and is the total time to wait; `None` (the default)
-waits indefinitely and `0` evaluates once. `service` supplies a default
-`<group>.<scope>` so the expression can name a keyword bare. `case=True`
+waits indefinitely and `0` evaluates once. `daemon` supplies a default
+`<group>.<daemon>` so the expression can name a keyword bare. `case=True`
 compares strings exactly — by default they compare case-insensitively. `poll_s` sets the interval between reads (libby daemons don't broadcast
 keyword changes, so `wait_for` polls) and `rpc_timeout_s` bounds each
 individual read.
@@ -65,7 +65,7 @@ keyword) raises `KeywordError`, since waiting can't resolve it. A keyword with
 no value yet counts as "not true yet" and the wait continues.
 
 `wait_for_result(...)` takes the same arguments and returns a `WaitResult`
-(`satisfied`, `keyword`, `value`, `elapsed_s`, `polls`) for callers that want
+(`satisfied`, `address`, `value`, `elapsed_s`, `polls`) for callers that want
 to report the value the wait settled on. See {mod}`libby.expression` for the
 accepted expression syntax — currently one comparison between a
 `$`-prefixed keyword and a literal.

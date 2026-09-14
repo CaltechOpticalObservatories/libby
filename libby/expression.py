@@ -7,8 +7,8 @@
     $hsfei.pickoff.status != Ready
 
 Keyword references are prefixed with ``$``, and are either fully qualified
-(``$<group>.<scope>.<name>``) or, when a default service is supplied, a bare
-name (``$<name>``).
+(``$<group>.<daemon>.<keyword>``) or, when a default daemon is supplied, a
+bare keyword (``$<keyword>``).
 
 Values need quoting only when they contain whitespace, start with ``$``, or
 look like an operator; one level of quoting is stripped. An unquoted value is
@@ -41,14 +41,14 @@ _ORDERING = {"<": operator.lt, "<=": operator.le, ">": operator.gt, ">=": operat
 
 @dataclass(frozen=True)
 class Comparison:
-    """One parsed comparison: a keyword, an operator, and a literal.
+    """One parsed comparison: a keyword address, an operator, and a literal.
 
     Always keyword-first, so a caller reads one keyword and compares one way;
     :func:`parse_comparison` flips the operator to make it so.
     """
 
-    keyword: str
-    """Qualified ``<group>.<scope>.<name>`` of the keyword to read."""
+    address: str
+    """The keyword's ``<group>.<daemon>.<keyword>`` address."""
 
     op: str
     """One of ``==``, ``!=``, ``<``, ``<=``, ``>``, ``>=``."""
@@ -87,31 +87,31 @@ class Comparison:
             ) from ex
 
     def __str__(self) -> str:
-        return f"${self.keyword} {self.op} {self.operand!r}"
+        return f"${self.address} {self.op} {self.operand!r}"
 
 
 def parse_comparison(
     expression: str,
     *,
-    service: Optional[str] = None,
+    daemon: Optional[str] = None,
 ) -> Comparison:
     """Parse ``expression`` into a :class:`Comparison`.
 
     Args:
         expression: One comparison, e.g. ``'$hsfei.pickoff.softmax >= 120'``.
-        service: Optional default ``<group>.<scope>``, letting the expression
-            name a keyword bare (``'$softmax >= 120'``).
+        daemon: Optional default ``<group>.<daemon>``, letting the
+            expression name a keyword bare (``'$softmax >= 120'``).
 
     Raises:
         ExpressionError: the expression is not a single keyword-to-literal
-            comparison, or the default service is malformed.
-        KeywordNameError: the resolved keyword name is not a valid
-            ``<group>.<scope>.<name>``.
+            comparison, or the default daemon is malformed.
+        KeywordNameError: the resolved address is not a valid
+            ``<group>.<daemon>.<keyword>``.
     """
     if not isinstance(expression, str) or not expression.strip():
         raise ExpressionError("expression must be a non-empty string")
-    if service is not None:
-        service = _check_service(service)
+    if daemon is not None:
+        daemon = _check_daemon(daemon)
 
     left_text, op, right_text = _split_on_operator(
         _strip_outer_parens(expression.strip())
@@ -138,12 +138,12 @@ def parse_comparison(
 
     if left_is_keyword:
         return Comparison(
-            keyword=_parse_keyword_ref(left_text, service),
+            address=_parse_keyword_ref(left_text, daemon),
             op=op,
             operand=_parse_literal(right_text),
         )
     return Comparison(
-        keyword=_parse_keyword_ref(right_text, service),
+        address=_parse_keyword_ref(right_text, daemon),
         op=_FLIPPED[op],
         operand=_parse_literal(left_text),
     )
@@ -223,18 +223,18 @@ def _split_on_operator(text: str) -> Tuple[str, str, str]:
     )
 
 
-def _check_service(service: str) -> str:
-    """Validate a default service is exactly ``<group>.<scope>``."""
-    parts = service.split(".")
+def _check_daemon(daemon: str) -> str:
+    """Validate a default daemon is exactly ``<group>.<daemon>``."""
+    parts = daemon.split(".")
     if len(parts) != 2 or not all(parts):
         raise ExpressionError(
-            f"service must be <group>.<scope>, got: {service}"
+            f"daemon must be <group>.<daemon>, got: {daemon}"
         )
-    return service
+    return daemon
 
 
-def _parse_keyword_ref(text: str, service: Optional[str]) -> str:
-    """Resolve a ``$``-prefixed reference to a qualified keyword name."""
+def _parse_keyword_ref(text: str, daemon: Optional[str]) -> str:
+    """Resolve a ``$``-prefixed reference to a qualified keyword address."""
     ref = text[1:]
     if not ref:
         raise ExpressionError("expected a keyword name after '$'")
@@ -242,16 +242,16 @@ def _parse_keyword_ref(text: str, service: Optional[str]) -> str:
     if dots == 2:
         qualified = ref
     elif dots == 0:
-        if not service:
+        if not daemon:
             raise ExpressionError(
                 f"'${ref}' is not qualified: write "
-                f"'$<group>.<scope>.{ref}', or supply a default service"
+                f"'$<group>.<daemon>.{ref}', or supply a default daemon"
             )
-        qualified = f"{service}.{ref}"
+        qualified = f"{daemon}.{ref}"
     else:
         raise ExpressionError(
-            f"keyword reference must be '$<group>.<scope>.<name>' or, with a "
-            f"default service, '$<name>': ${ref}"
+            f"keyword reference must be '$<group>.<daemon>.<keyword>' or, "
+            f"with a default daemon, '$<keyword>': ${ref}"
         )
     parse_keyword(qualified)
     return qualified

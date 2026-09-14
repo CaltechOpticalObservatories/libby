@@ -255,19 +255,19 @@ def _emit_wait(expression: str, result: WaitResult, *, as_json: bool) -> int:
             "ok":        True,
             "expression": expression,
             "satisfied": result.satisfied,
-            "qualified": result.keyword,
+            "qualified": result.address,
             "value":     result.value,
             "elapsed_s": round(result.elapsed_s, 3),
             "polls":     result.polls,
         }, indent=2))
         return 0 if result.satisfied else RC_WAIT_TIMEOUT
     if result.satisfied:
-        print(f"{result.keyword} = {result.value} "
+        print(f"{result.address} = {result.value} "
               f"(satisfied after {_fmt_elapsed(result.elapsed_s)})")
         return 0
     print(f"libby: {expression}: still false after "
           f"{_fmt_elapsed(result.elapsed_s)}; "
-          f"{result.keyword} = {result.value}", file=sys.stderr)
+          f"{result.address} = {result.value}", file=sys.stderr)
     return RC_WAIT_TIMEOUT
 
 
@@ -464,7 +464,7 @@ def cmd_waitfor(namespace: argparse.Namespace) -> int:
 
     # Parse before connecting: a typo shouldn't need a reachable broker.
     try:
-        parse_comparison(namespace.expression, service=namespace.service)
+        parse_comparison(namespace.expression, daemon=namespace.daemon)
     except LibbyError as ex:
         return _emit_error(None, str(ex), as_json=namespace.json)
 
@@ -474,7 +474,7 @@ def cmd_waitfor(namespace: argparse.Namespace) -> int:
         result = Client(lib).wait_for_result(
             namespace.expression,
             namespace.timeout,
-            service=namespace.service,
+            daemon=namespace.daemon,
             case=namespace.case,
             poll_s=namespace.poll,
         )
@@ -665,10 +665,11 @@ def build_parser() -> argparse.ArgumentParser:
     add_common(p_waitfor)
     p_waitfor.add_argument(
         "expression",
-        help="'$<group>.<scope>.<name> <op> <value>'; op is ==, !=, <, <=, >, >=",
+        help="'$<group>.<daemon>.<keyword> <op> <value>'; "
+             "op is ==, !=, <, <=, >, >=",
     )
-    p_waitfor.add_argument("-s", "--service", metavar="<group>.<scope>",
-                           help="Default peer, so the expression can name a "
+    p_waitfor.add_argument("-d", "--daemon", metavar="<group>.<daemon>",
+                           help="Default daemon, so the expression can name a "
                                 "keyword bare (e.g. '$ismoving == false')")
     p_waitfor.add_argument("--case", action="store_true",
                            help="Compare strings case-sensitively "
