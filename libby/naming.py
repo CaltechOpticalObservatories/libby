@@ -7,41 +7,33 @@ from .errors import KeywordNameError
 
 
 def parse_keyword(arg: str, *, allow_pattern: bool = False) -> Tuple[str, str, str]:
-    """Parse '<group>.<scope>.<name>' into (group, scope, name).
+    """Parse '<group>.<daemon>.<keyword>' into (group, daemon, keyword).
 
-    With ``allow_pattern=True``, ``%`` is allowed in the name segment.
-    Group and scope must always be explicit.
+    With ``allow_pattern=True``, ``%`` is allowed in the keyword segment.
+    Group and daemon must always be explicit.
     """
     parts = arg.split(".", 2)
     if len(parts) < 3 or not all(parts):
-        raise KeywordNameError(f"keyword must be <group>.<scope>.<name>, got: {arg}")
-    group, scope, name = parts
-    if "%" in group or "%" in scope:
         raise KeywordNameError(
-            f"wildcards (%) are not allowed in <group> or <scope>: {arg}"
+            f"address must be <group>.<daemon>.<keyword>, got: {arg}"
         )
-    if "%" in name and not allow_pattern:
+    group, daemon, keyword = parts
+    if "%" in group or "%" in daemon:
         raise KeywordNameError(
-            f"this verb requires an exact keyword name (no %): {arg}"
+            f"wildcards (%) are not allowed in <group> or <daemon>: {arg}"
         )
-    return group, scope, name
+    if "%" in keyword and not allow_pattern:
+        raise KeywordNameError(
+            f"this verb requires an exact keyword (no %): {arg}"
+        )
+    return group, daemon, keyword
 
 
 def qualified_peer_id(peer_id: str, group_id: Optional[str] = None) -> str:
-    """Return the wire identity for `peer_id`, namespaced by `group_id`.
+    """Return the lowercased wire identity "<group_id>.<peer_id>", or bare peer_id.
 
-    Joins as "<group_id>.<peer_id>" when group_id is set, else returns
-    peer_id unchanged. Computed once here and handed to a transport as an
-    already-unique opaque string, rather than teaching each transport
-    implementation to be group-aware on its own: a short, human peer_id like
-    "adc" is only safe from cross-group collisions once whatever's actually
-    used on the wire (a routing key, a DEALER identity, or any future
-    transport's own addressing) includes the group. See
-    plans/peer_group_naming_design.md.
-
-    Lowercases both inputs, so addressing is case-insensitive without either
-    side (daemon or client) needing its own normalization: both go through
-    this one function to build the identity they route on.
+    The single choke point both daemon and client build their identity from,
+    so a short peer_id cannot collide across groups and case never matters.
     """
     peer_id = peer_id.lower()
     if group_id:
@@ -49,15 +41,15 @@ def qualified_peer_id(peer_id: str, group_id: Optional[str] = None) -> str:
     return peer_id
 
 
-def peer_id(group: str, scope: str) -> str:
-    """Map a keyword's group/scope to the daemon peer id.
+def peer_id(group: str, daemon: str) -> str:
+    """Map an address's group/daemon segments to the daemon peer id.
 
-    `scope` is the peer_id, `group` is its group_id: the same pair
+    `daemon` is the peer_id, `group` is its group_id: the same pair
     `qualified_peer_id` joins on the daemon side, so client and daemon
     always agree on the wire identity by construction. See
     plans/peer_group_naming_design.md.
     """
-    return qualified_peer_id(scope, group)
+    return qualified_peer_id(daemon, group)
 
 
 _LITERALS = {"null": None, "true": True, "false": False}

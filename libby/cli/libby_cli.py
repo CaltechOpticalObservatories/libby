@@ -280,16 +280,16 @@ def _rpc_keys_describe(lib: Libby, peer: str, name: str, timeout: float) -> Dict
 
 def cmd_show(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
-    group, scope, name = parse_keyword(namespace.keyword, allow_pattern=True)
-    peer = peer_id(group, scope)
+    group, daemon, keyword = parse_keyword(namespace.keyword, allow_pattern=True)
+    peer = peer_id(group, daemon)
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
-    qualified_arg = f"{group}.{scope}.{name}"
+    qualified_arg = f"{group}.{daemon}.{keyword}"
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
-        if "%" in name:
-            list_resp = _rpc_keys_list(lib, peer, name, timeout)
+        if "%" in keyword:
+            list_resp = _rpc_keys_list(lib, peer, keyword, timeout)
             if not list_resp.get("ok"):
                 return _emit_error(
                     qualified_arg,
@@ -300,13 +300,13 @@ def cmd_show(namespace: argparse.Namespace) -> int:
             if not matches:
                 return 3
             rows: List[Tuple[str, Dict[str, Any]]] = [
-                (f"{group}.{scope}.{m}", _rpc_show_one(lib, peer, m, timeout))
+                (f"{group}.{daemon}.{m}", _rpc_show_one(lib, peer, m, timeout))
                 for m in matches
             ]
             return _emit_many(rows, as_json=namespace.json)
         return _emit_one(
             qualified_arg,
-            _rpc_show_one(lib, peer, name, timeout),
+            _rpc_show_one(lib, peer, keyword, timeout),
             as_json=namespace.json,
         )
     except Exception as ex:
@@ -322,8 +322,8 @@ def cmd_show(namespace: argparse.Namespace) -> int:
 
 def cmd_list(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
-    group, scope, pattern = parse_keyword(namespace.pattern, allow_pattern=True)
-    peer = peer_id(group, scope)
+    group, daemon, pattern = parse_keyword(namespace.pattern, allow_pattern=True)
+    peer = peer_id(group, daemon)
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
 
     lib: Optional[Libby] = None
@@ -341,7 +341,7 @@ def cmd_list(namespace: argparse.Namespace) -> int:
             if namespace.json:
                 print(json.dumps([], indent=2))
             return 3
-        qualified_names = [f"{group}.{scope}.{m}" for m in matches]
+        qualified_names = [f"{group}.{daemon}.{m}" for m in matches]
         return _emit_list(qualified_names, as_json=namespace.json)
     except Exception as ex:
         logger.exception("list %s raised", namespace.pattern)
@@ -356,15 +356,15 @@ def cmd_list(namespace: argparse.Namespace) -> int:
 
 def cmd_describe(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
-    group, scope, name = parse_keyword(namespace.keyword, allow_pattern=False)
-    peer = peer_id(group, scope)
-    qualified = f"{group}.{scope}.{name}"
+    group, daemon, keyword = parse_keyword(namespace.keyword, allow_pattern=False)
+    peer = peer_id(group, daemon)
+    qualified = f"{group}.{daemon}.{keyword}"
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
-        resp = _rpc_keys_describe(lib, peer, name, timeout)
+        resp = _rpc_keys_describe(lib, peer, keyword, timeout)
         if not resp.get("ok"):
             return _emit_error(
                 qualified,
@@ -387,8 +387,8 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
 
     # Two forms accepted:
-    #   modify <group>.<scope>.<name>=<value>
-    #   modify <group>.<scope>.<name> <value>
+    #   modify <group>.<daemon>.<keyword>=<value>
+    #   modify <group>.<daemon>.<keyword> <value>
     if namespace.value is None:
         if "=" not in namespace.keyword:
             return _emit_error(
@@ -401,16 +401,16 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
         keyword_str = namespace.keyword
         value_str = namespace.value
 
-    group, scope, name = parse_keyword(keyword_str)
-    peer = peer_id(group, scope)
-    qualified = f"{group}.{scope}.{name}"
+    group, daemon, keyword = parse_keyword(keyword_str)
+    peer = peer_id(group, daemon)
+    qualified = f"{group}.{daemon}.{keyword}"
     value = coerce_value(value_str)
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
-        timeout = _modify_timeout(lib, peer, name, namespace.timeout)
-        resp = _peel(lib.rpc(peer, name, {"value": value}, ttl_ms=int(timeout * 1000)))
+        timeout = _modify_timeout(lib, peer, keyword, namespace.timeout)
+        resp = _peel(lib.rpc(peer, keyword, {"value": value}, ttl_ms=int(timeout * 1000)))
         return _emit_one(qualified, resp, as_json=namespace.json)
     except Exception as ex:
         logger.exception("modify %s raised", qualified)
@@ -552,29 +552,29 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Also echo the triage log to stderr")
 
     # argparse %-formats help strings, so a literal % has to be escaped
-    p_show = sub.add_parser("show", help="Read a keyword's value (%% allowed in name)")
+    p_show = sub.add_parser("show", help="Read a keyword's value (%% allowed in keyword)")
     add_common(p_show)
     p_show.add_argument("keyword",
-                        help="<group>.<scope>.<name> (%% allowed in name segment)")
+                        help="<group>.<daemon>.<keyword> (%% allowed in keyword segment)")
     p_show.set_defaults(func=cmd_show)
 
     p_list = sub.add_parser("list", help="List keyword names matching a pattern")
     add_common(p_list)
     p_list.add_argument("pattern",
-                        help="<group>.<scope>.<name-pattern> (%% wildcard in name)")
+                        help="<group>.<daemon>.<keyword-pattern> (%% wildcard in keyword)")
     p_list.set_defaults(func=cmd_list)
 
     p_describe = sub.add_parser("describe", help="Show metadata for a keyword")
     add_common(p_describe)
     p_describe.add_argument("keyword",
-                            help="<group>.<scope>.<name> (exact, no wildcards)")
+                            help="<group>.<daemon>.<keyword> (exact, no wildcards)")
     p_describe.set_defaults(func=cmd_describe)
 
     p_modify = sub.add_parser("modify", help="Set a keyword's value")
     add_common(p_modify)
     p_modify.add_argument(
         "keyword",
-        help="<group>.<scope>.<name>=<value> or <group>.<scope>.<name> (+ value arg)",
+        help="<group>.<daemon>.<keyword>=<value> or <group>.<daemon>.<keyword> (+ value arg)",
     )
     p_modify.add_argument("value", nargs="?",
                           help="Value (if not using = form)")
