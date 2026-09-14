@@ -3,19 +3,19 @@
 `libby` is the command-line front for keyword peers. Verbs:
 
 ```
-libby show     <group>.<scope>.<name>     # read a keyword (% wildcard in name)
-libby modify   <group>.<scope>.<name>=V   # write a keyword (exact name)
-libby list     <group>.<scope>.<pattern>  # list keyword names (% wildcard in name)
-libby describe <group>.<scope>.<name>     # metadata for one keyword (exact name)
+libby show     <group>.<daemon>.<keyword>     # read a keyword (% wildcard in keyword)
+libby modify   <group>.<daemon>.<keyword>=V   # write a keyword (exact keyword)
+libby list     <group>.<daemon>.<pattern>     # list keyword names (% wildcard in keyword)
+libby describe <group>.<daemon>.<keyword>     # metadata for one keyword (exact keyword)
 ```
 
-`<group>.<scope>` is the address of one peer: `group` is that peer's
-`group_id`, `scope` is its `peer_id` (e.g. `peer_id: adc, group_id: hsfei` in
-the daemon's config is addressed as `hsfei.adc`). `Libby.rabbitmq()` /
+`<group>.<daemon>` is the address of one daemon: `group` is its `group_id`
+and `daemon` is its `peer_id` (e.g. `peer_id: adc, group_id: hsfei` in the
+daemon's config is addressed as `hsfei.adc`). `Libby.rabbitmq()` /
 `Libby.zmq()` build the actual wire identity from those two fields via
 `libby.naming.qualified_peer_id`, so a daemon config never needs to
-concatenate them by hand. `group`/`scope` are case-insensitive (`HSFEI.ADC`
-and `hsfei.adc` reach the same peer); the keyword name isn't. Cross-peer
+concatenate them by hand. `group`/`daemon` are case-insensitive (`HSFEI.ADC`
+and `hsfei.adc` reach the same daemon); the keyword isn't. Cross-peer
 fanout is not supported. `req` and `sub` are kept for raw RPC / topic
 debugging.
 

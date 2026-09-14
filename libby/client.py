@@ -1,7 +1,7 @@
 """Programmatic client for getting and setting keywords on libby daemons.
 
 ``Client`` CLI spins up a connection and holds it for its lifetime, so a script can touch many
-keywords cheaply. It resolves a qualified ``<group>.<scope>.<name>`` to a peer
+keywords cheaply. It resolves a qualified ``<group>.<daemon>.<keyword>`` to a peer
 and key, calls ``Libby.rpc``, and turns the reply into a value or a
 ``LibbyError`` via :func:`libby.response.unwrap`.
 """
@@ -76,8 +76,8 @@ class Client:
 
     def show(self, name: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:
         """Read a keyword's full response (value, units, flags)."""
-        group, scope, keyword = parse_keyword(name)
-        envelope = self._libby.rpc(peer_id(group, scope), keyword, {},
+        group, daemon, keyword = parse_keyword(name)
+        envelope = self._libby.rpc(peer_id(group, daemon), keyword, {},
                                    ttl_ms=int(timeout_s * 1000))
         return unwrap(name, envelope)
 
@@ -87,8 +87,8 @@ class Client:
 
     def set(self, name: str, value: Any, *, timeout_s: Optional[float] = None) -> Any:
         """Write a keyword and return the value the daemon applied."""
-        group, scope, keyword = parse_keyword(name)
-        peer = peer_id(group, scope)
+        group, daemon, keyword = parse_keyword(name)
+        peer = peer_id(group, daemon)
         ttl_s = self._set_timeout(name, peer, keyword, timeout_s)
         envelope = self._libby.rpc(peer, keyword, {"value": value},
                                    ttl_ms=int(ttl_s * 1000))

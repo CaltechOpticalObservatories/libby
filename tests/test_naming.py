@@ -6,7 +6,7 @@ from libby.naming import coerce_value, parse_keyword, peer_id, qualified_peer_id
 
 
 class ParseKeywordTests(unittest.TestCase):
-    def test_splits_group_scope_name(self):
+    def test_splits_group_daemon_keyword(self):
         self.assertEqual(
             parse_keyword("hsfei.pickoff.positionvalue"),
             ("hsfei", "pickoff", "positionvalue"),
@@ -20,13 +20,13 @@ class ParseKeywordTests(unittest.TestCase):
         with self.assertRaises(KeywordNameError):
             parse_keyword("hsfei..positionvalue")
 
-    def test_rejects_wildcard_in_group_or_scope(self):
+    def test_rejects_wildcard_in_group_or_daemon(self):
         with self.assertRaises(KeywordNameError):
             parse_keyword("hs%ei.pickoff.positionvalue")
         with self.assertRaises(KeywordNameError):
             parse_keyword("hsfei.pick%ff.positionvalue")
 
-    def test_rejects_wildcard_in_name_unless_allowed(self):
+    def test_rejects_wildcard_in_keyword_unless_allowed(self):
         with self.assertRaises(KeywordNameError):
             parse_keyword("hsfei.pickoff.is%")
         self.assertEqual(
@@ -36,10 +36,8 @@ class ParseKeywordTests(unittest.TestCase):
 
 
 class PeerIdTests(unittest.TestCase):
-    def test_joins_group_and_scope_with_a_dot(self):
-        # Matches the qualified wire identity Libby.rabbitmq()/zmq() compute
-        # from a daemon's own peer_id/group_id config fields (qualified_peer_id):
-        # see plans/peer_group_naming_design.md.
+    def test_joins_group_and_daemon_with_a_dot(self):
+        # Must match the wire identity qualified_peer_id builds daemon-side
         self.assertEqual(peer_id("hsfei", "adc"), "hsfei.adc")
 
     def test_case_insensitive(self):
