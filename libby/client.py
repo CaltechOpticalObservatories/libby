@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .config_resolve import (
     DEFAULT_BIND,
@@ -47,6 +47,30 @@ class WaitResult:
 
     polls: int
     """Number of reads attempted."""
+
+# Keeps one ``keys.read`` response well inside the transports' 512 KB MTU,
+# however many keywords a caller asks for at once.
+DEFAULT_READ_CHUNK = 100
+
+
+def _chunked(items: Sequence[str], size: int) -> Iterator[Sequence[str]]:
+    for start in range(0, len(items), size):
+        yield items[start:start + size]
+
+
+@dataclass(frozen=True)
+class KeyListing:
+    """One peer's answer to a ``keys.list`` request.
+
+    ``services`` lists the non-keyword keys the peer answers, such as
+    ``keys.read``. It is empty for a peer on a libby old enough not to report
+    the field, which is how a caller decides whether bulk reads are available:
+    an unknown key is dropped without an ACK, so probing for one looks exactly
+    like a dead peer.
+    """
+
+    names: Tuple[str, ...]
+    services: Tuple[str, ...]
 
 
 class Client:
@@ -112,26 +136,103 @@ class Client:
     def set(self, name: str, value: Any, *, timeout_s: Optional[float] = None) -> Any:
         """Write a keyword and return the value the daemon applied."""
         group, daemon, keyword = parse_keyword(name)
-        peer = peer_id(group, daemon)
-        ttl_s = self._set_timeout(name, peer, keyword, timeout_s)
-        envelope = self._libby.rpc(peer, keyword, {"value": value},
+        ttl_s = self._set_timeout(name, timeout_s)
+        envelope = self._libby.rpc(peer_id(group, daemon), keyword, {"value": value},
                                    ttl_ms=int(ttl_s * 1000))
         return unwrap(name, envelope).get("value")
 
-    def _set_timeout(
+    def listing(self, pattern: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> KeyListing:
+        """List a peer's matching keywords and the services it serves, in one call.
+
+        Use this over :meth:`list` when the caller also needs to know whether
+        the peer supports bulk reads; both come from the same ``keys.list``
+        response, so asking costs no extra round trip.
+        """
+        group, daemon, keyword_pattern = parse_keyword(pattern, allow_pattern=True)
+        envelope = self._libby.rpc(peer_id(group, daemon), "keys.list",
+                                   {"pattern": keyword_pattern},
+                                   ttl_ms=int(timeout_s * 1000))
+        response = unwrap(pattern, envelope)
+        return KeyListing(
+            names=tuple(f"{group}.{daemon}.{match}"
+                        for match in response.get("matches", [])),
+            services=tuple(response.get("services", [])),
+        )
+
+    def list(self, pattern: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> List[str]:
+        """List qualified keyword names matching ``<group>.<daemon>.<pattern>``.
+
+        Returns fully qualified names, so the result feeds straight back into
+        :meth:`get`, :meth:`show` or :meth:`read`.
+        """
+        return list(self.listing(pattern, timeout_s=timeout_s).names)
+
+    def describe(self, name: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:
+        """Read one keyword's metadata (type, access, units, timeout_s)."""
+        group, daemon, keyword = parse_keyword(name)
+        envelope = self._libby.rpc(peer_id(group, daemon), "keys.describe",
+                                   {"name": keyword}, ttl_ms=int(timeout_s * 1000))
+        return unwrap(name, envelope)
+
+    def read(
         self,
-        name: str,
-        peer: str,
-        keyword: str,
-        override: Optional[float],
-    ) -> float:
+        names: Sequence[str],
+        *,
+        timeout_s: float = DEFAULT_TIMEOUT_S,
+        chunk_size: int = DEFAULT_READ_CHUNK,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Read many keywords using one request per peer, per chunk.
+
+        Unlike :meth:`get` and :meth:`set`, this never raises for a failed
+        read: every requested name maps to its own response dict, so one dead
+        peer or one broken getter costs only its own entries. Names may span
+        peers; each peer is requested separately, in the order given.
+        """
+        if chunk_size < 1:
+            raise ValueError("chunk_size must be at least 1")
+
+        by_peer: Dict[Tuple[str, str], List[str]] = {}
+        for name in names:
+            group, daemon, keyword = parse_keyword(name)
+            by_peer.setdefault((group, daemon), []).append(keyword)
+
+        results: Dict[str, Dict[str, Any]] = {}
+        for (group, daemon), keywords in by_peer.items():
+            for chunk in _chunked(keywords, chunk_size):
+                results.update(self._read_chunk(group, daemon, chunk, timeout_s))
+        return results
+
+    def _read_chunk(
+        self,
+        group: str,
+        daemon: str,
+        keywords: Sequence[str],
+        timeout_s: float,
+    ) -> Dict[str, Dict[str, Any]]:
+        """Read one peer's keywords, reporting a peer-level failure per name."""
+        prefix = f"{group}.{daemon}"
+        try:
+            envelope = self._libby.rpc(peer_id(group, daemon), "keys.read",
+                                       {"names": list(keywords)},
+                                       ttl_ms=int(timeout_s * 1000))
+            values = unwrap(prefix, envelope).get("values", {})
+        except LibbyError as exc:
+            # Spread a peer-level failure across its names so a dead peer
+            # cannot hide the peers that did answer
+            return {f"{prefix}.{keyword}": {"ok": False, "error": str(exc)}
+                    for keyword in keywords}
+        return {
+            f"{prefix}.{keyword}": values.get(
+                keyword, {"ok": False, "error": "missing from keys.read response"})
+            for keyword in keywords
+        }
+
+    def _set_timeout(self, name: str, override: Optional[float]) -> float:
         """Resolve a write timeout: override → keyword's timeout_s → default."""
         if override is not None:
             return override
         try:
-            envelope = self._libby.rpc(peer, "keys.describe", {"name": keyword},
-                                       ttl_ms=int(DEFAULT_TIMEOUT_S * 1000))
-            described = unwrap(name, envelope).get("timeout_s")
+            described = self.describe(name).get("timeout_s")
             if described is not None:
                 return float(described)
         except LibbyError:

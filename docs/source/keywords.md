@@ -47,13 +47,34 @@ client.rpc("my-peer", "position", {"value": 12.5})  # modify
 client.rpc("my-peer", "halt", {"value": 1})         # fire
 ```
 
-Two meta-services are auto-registered on every peer that uses the keyword
+Three meta-services are auto-registered on every peer that uses the keyword
 registry:
 
-- `keys.list` — payload `{"pattern": "..."}` (default `"%"`) → names, sorted.
-  `%` wildcards within a single name.
+- `keys.list` — payload `{"pattern": "..."}` (default `"%"`) → `matches`,
+  names sorted, plus `services` (below). `%` wildcards within a single name.
 - `keys.describe` — payload `{"name": "..."}` → flat metadata dict. Exact
   lookup; no wildcards.
+- `keys.read` — payload `{"names": [...]}` or `{"pattern": "..."}` → `values`,
+  a map of name to that keyword's own show response. Reads a whole peer in one
+  request.
+
+`keys.read` exists because a daemon answers requests one at a time, inline on
+its receive thread. Reading twenty keywords individually does not overlap
+anything on that daemon; it serializes exactly as a batch would, while paying
+twenty dispatch cycles instead of one. Batching matters most for a poller that
+must not crowd out an operator or a control command.
+
+A failing getter is reported inside `values` as
+`{"ok": false, "error": "..."}`, so one broken keyword costs only itself.
+Pattern selection skips write-only keywords, which have nothing to show;
+naming one explicitly still answers with its error.
+
+`keys.list` also reports `services`: the non-keyword keys this peer answers,
+including the `keys.*` meta-services and any RPC service a daemon registered
+itself. It is how a caller tells "this peer has no `keys.read`" from "this
+peer did not answer", because an unknown key is dropped without an ACK and so
+probing for one is indistinguishable from a timeout. A peer running an older
+libby omits the field, which is the negative signal.
 
 `LibbyDaemon` subclasses also get a `lasterror` keyword for free (not just
 any keyword-registry user, since it needs the daemon's own logger): a

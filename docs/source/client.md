@@ -26,6 +26,8 @@ client = Client.zmq(address_book={"hsfei_pickoff": "tcp://host:5555"})
   units, flags); `set(name, value)` → the value the daemon applied.
 - `wait_for(expression, timeout)` → blocks until a keyword satisfies a
   comparison; see below.
+- `list(pattern)` → matching qualified names; `describe(name)` → one keyword's
+  metadata; `read(names)` → many keywords in one request per peer; see below.
 - Failures raise rather than return sentinels: `KeywordError` when the daemon
   rejects a get/set (its message is on `.error`), `LibbyTimeout` when a
   request isn't answered, both subclasses of `LibbyError`. `set` accepts
@@ -70,8 +72,46 @@ to report the value the wait settled on. See {mod}`libby.expression` for the
 accepted expression syntax — currently one comparison between a
 `$`-prefixed keyword and a literal.
 
-Exact names only for now; `%` wildcard reads, `list`, and `describe` are
-planned follow-ons — use the {doc}`CLI <cli>` for those today.
+## Listing, describing and bulk reads
+
+`list` returns fully qualified names, so its result feeds straight back into
+`get`, `show` or `read`:
+
+```python
+names = client.list("hsfei.pickoff.is%")   # ["hsfei.pickoff.isconnected", ...]
+meta = client.describe("hsfei.pickoff.positionvalue")
+meta["type"], meta["units"]                # ("float", "mm")
+```
+
+`read` takes many names and issues one request per peer rather than one per
+keyword, which is what a poller should use:
+
+```python
+values = client.read(names)
+# {"hsfei.pickoff.isconnected": {"ok": True, "value": True}, ...}
+```
+
+Unlike `get` and `set`, `read` never raises for a failed read. Every requested
+name maps to its own response, so one dead peer or one broken getter costs
+only its own entries. Names may span peers; each peer is asked separately.
+Long name lists are split into bounded requests (`chunk_size=`) and merged.
+
+`listing` returns both the matching names and the peer's `services` from a
+single `keys.list` response, for a caller that needs to know whether bulk
+reads are available:
+
+```python
+listing = client.listing("hsfei.pickoff.%")
+if "keys.read" in listing.services:
+    values = client.read(list(listing.names))
+else:                                  # peer on an older libby
+    values = {n: client.show(n) for n in listing.names}
+```
+
+Checking `services` is the only reliable test: `Libby.knows_key` reads the
+discovery registry, which stays empty without discovery, and calling
+`keys.read` to see what happens cannot distinguish an old peer from a dead
+one.
 
 See {mod}`libby.client` in the {doc}`API reference </api/index>` for the
 full method signatures.
