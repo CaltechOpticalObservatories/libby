@@ -12,7 +12,7 @@ from .keyword import (
     match_pattern,
 )
 from .keyword_registry import KeywordRegistry
-from .client import Client, WaitResult
+from .client import Client, KeyListing, WaitResult
 from .expression import Comparison, parse_comparison
 from .errors import (
     LibbyError,
@@ -26,6 +26,7 @@ from .errors import (
 __all__ = [
     "Libby",
     "Client",
+    "KeyListing",
     "WaitResult",
     "Protocol",
     "MessageBuilder",

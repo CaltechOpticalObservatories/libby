@@ -38,6 +38,7 @@ python -m unittest discover -s tests
 ```
 
 Most of `tests/` needs no transport at all. `tests/test_client_integration.py`
-is the exception: it starts a real `LibbyDaemon` over RabbitMQ and exercises
-`Client` against it, and skips itself automatically if no broker is reachable
-at `amqp://localhost`.
+is the exception: it starts a real `LibbyDaemon` and exercises `Client`
+against it, once per transport. The ZMQ cases need no external service and
+always run; the RabbitMQ cases skip themselves if no broker is reachable at
+`amqp://localhost`.

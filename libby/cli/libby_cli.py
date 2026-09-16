@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
-from libby.client import DEFAULT_POLL_S, Client, WaitResult
 from libby.config_resolve import (
     DEFAULT_BIND,
     DEFAULT_CONFIG_PATH,
@@ -23,6 +22,7 @@ from libby.config_resolve import (
     resolve_rabbitmq_url,
     resolve_transport,
 )
+from libby.client import DEFAULT_POLL_S, Client, WaitResult
 from libby.errors import KeywordError, LibbyError
 from libby.expression import parse_comparison
 from libby.libby import Libby
@@ -271,7 +271,7 @@ def _emit_wait(expression: str, result: WaitResult, *, as_json: bool) -> int:
     return RC_WAIT_TIMEOUT
 
 
-def _modify_timeout(lib: Libby, peer: str, name: str, user_timeout: Optional[float]) -> float:
+def _modify_timeout(client: Client, qualified: str, user_timeout: Optional[float]) -> float:
     """Resolve the timeout for a modify call.
 
     Precedence: ``--timeout`` flag → ``timeout_s`` from the keyword's
@@ -280,12 +280,11 @@ def _modify_timeout(lib: Libby, peer: str, name: str, user_timeout: Optional[flo
     if user_timeout is not None:
         return user_timeout
     try:
-        resp = _rpc_keys_describe(lib, peer, name, DEFAULT_TIMEOUT_S)
-        if resp.get("ok"):
-            t = resp.get("timeout_s")
-            if t is not None:
-                return float(t)
-    except Exception:
+        described = client.describe(qualified, timeout_s=DEFAULT_TIMEOUT_S).get("timeout_s")
+        if described is not None:
+            return float(described)
+    except (LibbyError, ValueError, TypeError):
+        # Best-effort: an unreadable or non-numeric timeout_s just falls back
         pass
     return DEFAULT_TIMEOUT_S
 
@@ -305,14 +304,6 @@ def _rpc_show_one(lib: Libby, peer: str, name: str, timeout: float) -> Dict[str,
     return _peel(lib.rpc(peer, name, {}, ttl_ms=int(timeout * 1000)))
 
 
-def _rpc_keys_list(lib: Libby, peer: str, pattern: str, timeout: float) -> Dict[str, Any]:
-    return _peel(lib.rpc(peer, "keys.list", {"pattern": pattern}, ttl_ms=int(timeout * 1000)))
-
-
-def _rpc_keys_describe(lib: Libby, peer: str, name: str, timeout: float) -> Dict[str, Any]:
-    return _peel(lib.rpc(peer, "keys.describe", {"name": name}, ttl_ms=int(timeout * 1000)))
-
-
 def cmd_show(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
     group, daemon, keyword = parse_keyword(namespace.keyword, allow_pattern=True)
@@ -324,19 +315,16 @@ def cmd_show(namespace: argparse.Namespace) -> int:
     try:
         lib = _mk_libby(namespace, config)
         if "%" in keyword:
-            list_resp = _rpc_keys_list(lib, peer, keyword, timeout)
-            if not list_resp.get("ok"):
-                return _emit_error(
-                    qualified_arg,
-                    list_resp.get("error", "unknown error"),
-                    as_json=namespace.json,
-                )
-            matches: List[str] = list_resp.get("matches", [])
+            matches = Client(lib).list(qualified_arg, timeout_s=timeout)
             if not matches:
                 return 3
+            # One show per match rather than a single keys.read: the CLI has to
+            # keep working against daemons still running a libby without it,
+            # and a human reading a handful of keywords gains nothing from the
+            # round trip saved
             rows: List[Tuple[str, Dict[str, Any]]] = [
-                (f"{group}.{daemon}.{m}", _rpc_show_one(lib, peer, m, timeout))
-                for m in matches
+                (name, _rpc_show_one(lib, peer, name.rsplit(".", 1)[-1], timeout))
+                for name in matches
             ]
             return _emit_many(rows, as_json=namespace.json)
         return _emit_one(
@@ -344,6 +332,8 @@ def cmd_show(namespace: argparse.Namespace) -> int:
             _rpc_show_one(lib, peer, keyword, timeout),
             as_json=namespace.json,
         )
+    except LibbyError as ex:
+        return _emit_error(qualified_arg, str(ex), as_json=namespace.json)
     except Exception as ex:
         logger.exception("show %s raised", qualified_arg)
         return _emit_error(qualified_arg, str(ex), as_json=namespace.json)
@@ -357,27 +347,22 @@ def cmd_show(namespace: argparse.Namespace) -> int:
 
 def cmd_list(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
-    group, daemon, pattern = parse_keyword(namespace.pattern, allow_pattern=True)
-    peer = peer_id(group, daemon)
+    # Reject a malformed address here, before opening a transport, so it stays
+    # an argument error; Client.list parses it again for the peer id
+    parse_keyword(namespace.pattern, allow_pattern=True)
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
-        resp = _rpc_keys_list(lib, peer, pattern, timeout)
-        if not resp.get("ok"):
-            return _emit_error(
-                namespace.pattern,
-                resp.get("error", "unknown error"),
-                as_json=namespace.json,
-            )
-        matches: List[str] = resp.get("matches", [])
-        if not matches:
+        qualified_names = Client(lib).list(namespace.pattern, timeout_s=timeout)
+        if not qualified_names:
             if namespace.json:
                 print(json.dumps([], indent=2))
             return 3
-        qualified_names = [f"{group}.{daemon}.{m}" for m in matches]
         return _emit_list(qualified_names, as_json=namespace.json)
+    except LibbyError as ex:
+        return _emit_error(namespace.pattern, str(ex), as_json=namespace.json)
     except Exception as ex:
         logger.exception("list %s raised", namespace.pattern)
         return _emit_error(namespace.pattern, str(ex), as_json=namespace.json)
@@ -392,21 +377,16 @@ def cmd_list(namespace: argparse.Namespace) -> int:
 def cmd_describe(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
     group, daemon, keyword = parse_keyword(namespace.keyword, allow_pattern=False)
-    peer = peer_id(group, daemon)
     qualified = f"{group}.{daemon}.{keyword}"
     timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
-        resp = _rpc_keys_describe(lib, peer, keyword, timeout)
-        if not resp.get("ok"):
-            return _emit_error(
-                qualified,
-                resp.get("error", "unknown error"),
-                as_json=namespace.json,
-            )
+        resp = Client(lib).describe(qualified, timeout_s=timeout)
         return _emit_describe(qualified, resp, as_json=namespace.json)
+    except LibbyError as ex:
+        return _emit_error(qualified, str(ex), as_json=namespace.json)
     except Exception as ex:
         logger.exception("describe %s raised", qualified)
         return _emit_error(qualified, str(ex), as_json=namespace.json)
@@ -444,7 +424,7 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
-        timeout = _modify_timeout(lib, peer, keyword, namespace.timeout)
+        timeout = _modify_timeout(Client(lib), qualified, namespace.timeout)
         resp = _peel(lib.rpc(peer, keyword, {"value": value}, ttl_ms=int(timeout * 1000)))
         return _emit_one(qualified, resp, as_json=namespace.json)
     except Exception as ex:
