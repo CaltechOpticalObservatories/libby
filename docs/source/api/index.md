@@ -62,6 +62,17 @@ Generated from docstrings in the `libby` package.
    :show-inheritance:
 ```
 
+## Keygrabber
+
+The InfluxDB sink is omitted here: it imports its client at module scope, and
+the docs build does not install the optional `influxdb` extra.
+
+```{eval-rst}
+.. automodule:: libby.keygrabber.sink
+   :members:
+   :show-inheritance:
+```
+
 ## Responses and errors
 
 ```{eval-rst}
