@@ -1,0 +1,41 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "libby/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "tox.ini"
+      - ".github/workflows/tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "libby/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "tox.ini"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install tox
+        run: pip install tox
+
+      # No broker service here on purpose: the RabbitMQ integration cases skip
+      # themselves, and the ZMQ ones cover the same behaviour end to end with
+      # no external dependency.
+      - name: Run tests
+        run: tox

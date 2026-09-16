@@ -50,6 +50,7 @@ class Libby:
         self.keyword_registry = KeywordRegistry()
         self.serve_keys(["keys.list"], self._keys_list)
         self.serve_keys(["keys.describe"], self._keys_describe)
+        self.serve_keys(["keys.read"], self._keys_read)
 
     @classmethod
     def zmq(
@@ -198,7 +199,24 @@ class Libby:
         pattern = payload.get("pattern", "%")
         if not isinstance(pattern, str):
             return {"ok": False, "error": "pattern must be a string"}
-        return {"ok": True, "matches": match_pattern(pattern, self._keywords)}
+        return {
+            "ok": True,
+            "matches": match_pattern(pattern, self._keywords),
+            "services": self._served_services(),
+        }
+
+    def _served_services(self) -> List[str]:
+        """Return the non-keyword keys this peer answers, e.g. ``keys.read``.
+
+        Lets a caller tell "this peer does not serve keys.read" from "this peer
+        did not answer": an unknown key is dropped without an ACK, so probing
+        for one is indistinguishable from a timeout. A peer on an older libby
+        omits the field entirely, which is the negative signal.
+
+        Keyword names are excluded because ``matches`` already carries them,
+        and ``%`` cannot match a dotted name in any case.
+        """
+        return sorted(set(self.keys.local) - set(self._keywords))
 
     def _keys_describe(self, payload: dict, _ctx: dict) -> dict:
         name = payload.get("name")
@@ -208,6 +226,38 @@ class Libby:
         if keyword is None:
             return {"ok": False, "error": f"unknown keyword '{name}'"}
         return {"ok": True, **keyword.describe()}
+
+    def _keys_read(self, payload: dict, _ctx: dict) -> dict:
+        """Show many keywords in one request.
+
+        Selects by explicit ``names`` or by ``pattern`` (default ``"%"``, which
+        skips write-only keywords since showing them yields nothing). Each
+        keyword's own show response goes under ``values``, so a getter that
+        fails costs one entry instead of the whole batch.
+        """
+        names = payload.get("names")
+        if names is None:
+            pattern = payload.get("pattern", "%")
+            if not isinstance(pattern, str):
+                return {"ok": False, "error": "pattern must be a string"}
+            names = [
+                name for name in match_pattern(pattern, self._keywords)
+                if not self._keywords[name].writeonly
+            ]
+        elif not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            return {"ok": False, "error": "names must be a list of strings"}
+
+        values: Dict[str, dict] = {}
+        for name in names:
+            keyword = self._keywords.get(name)
+            if keyword is None:
+                values[name] = {"ok": False, "error": f"unknown keyword '{name}'"}
+                continue
+            try:
+                values[name] = keyword.handle({})
+            except Exception as e:  # pylint: disable=broad-exception-caught
+                values[name] = {"ok": False, "error": str(e)}
+        return {"ok": True, "values": values}
 
     def listen(self, topic: str, handler: Callable[[Any], None]) -> None:
         self.proto.listen(topic, handler)
