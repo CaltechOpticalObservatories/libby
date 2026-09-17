@@ -10,7 +10,6 @@ on:
       - "tox.ini"
       - ".github/workflows/tests.yml"
   pull_request:
-    branches: [main]
     paths:
       - "libby/**"
       - "tests/**"
