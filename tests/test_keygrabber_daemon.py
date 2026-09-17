@@ -15,6 +15,7 @@ import time
 import unittest
 from typing import List, Sequence
 
+from libby import Client, KeywordError
 from libby.daemon import LibbyDaemon
 from libby.keygrabber import KeygrabberDaemon, Sample
 from libby.rabbitmq_transport import RabbitMQTransport
@@ -195,12 +196,98 @@ class _Bases:  # pylint: disable=too-few-public-methods
             self.grabber.start()
             self._await_samples()
             # pylint: disable=protected-access
-            collection = self.grabber._collections[0]
+            scheduler = self.grabber._scheduler
             self.grabber._pool.shutdown(wait=True)      # left non-None on purpose
-            self.grabber._in_flight.discard(collection.name)
 
-            self.grabber._submit(collection)            # must not raise
-            self.assertNotIn(collection.name, self.grabber._in_flight)
+            self.grabber._submit_due()                  # must not raise
+            self.assertEqual(scheduler.in_flight, 0)
+
+        def _grabber_client(self) -> Client:
+            """Return a client addressed at the keygrabber's own keywords."""
+            raise NotImplementedError
+
+        def _keyword(self, name: str) -> str:
+            return f"hispec.{self.grabber.peer_id}.{name}"
+
+        def test_control_keywords_answer_while_collecting(self):
+            """Serve the daemon's own keywords while ticks are in flight.
+
+            The getters run on the transport's receive thread, the same thread
+            that delivers replies to the reader threads, so one that blocked
+            would time out every read in flight.
+            """
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                self.assertTrue(client.get(self._keyword("enabled")))
+                self.assertTrue(client.get(self._keyword("isconnected")))
+                self.assertGreater(client.get(self._keyword("pointswritten")), 0)
+                self.assertEqual(client.get(self._keyword("writeerrors")), 0)
+                self.assertEqual(client.get(self._keyword("queuedepth")), 0)
+                self.assertIsInstance(client.get(self._keyword("readerrors")), int)
+
+        def test_pausing_stops_collection_without_exiting(self):
+            """Stop collecting on a write of false, and resume on true."""
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                client.set(self._keyword("enabled"), False)
+                self.assertFalse(client.get(self._keyword("enabled")))
+                time.sleep(1.2)                 # more than the 0.5s cadence
+                paused_at = len(self.sink.keywords())
+                time.sleep(1.2)
+                self.assertEqual(len(self.sink.keywords()), paused_at)
+
+                client.set(self._keyword("enabled"), True)
+            deadline = time.monotonic() + SETTLE_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if len(self.sink.keywords()) > paused_at:
+                    return
+                time.sleep(0.05)
+            self.fail("collection did not resume after being re-enabled")
+
+        def test_per_collection_cadence_is_adjustable(self):
+            """Change one collection's interval over the wire."""
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                self.assertEqual(client.get(self._keyword("target.interval")), 0.5)
+                self.assertEqual(client.set(self._keyword("target.interval"), 5.0),
+                                 5.0)
+                self.assertEqual(client.get(self._keyword("target.interval")), 5.0)
+
+        def test_cadence_below_the_timeout_headroom_is_refused(self):
+            """Refuse a live cadence change the config loader would reject."""
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                with self.assertRaises(KeywordError):
+                    client.set(self._keyword("target.interval"), 0.3)
+
+        def test_collection_health_is_reported(self):
+            """Report the last tick's time and lateness per collection."""
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                self.assertIsNotNone(client.get(self._keyword("target.lastsample")))
+                self.assertGreaterEqual(client.get(self._keyword("target.lag")), 0.0)
+
+        def test_disconnect_is_refused_but_reconnect_is_accepted(self):
+            """Offer a reconnect without offering a manual disconnect."""
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                with self.assertRaises(KeywordError):
+                    client.set(self._keyword("isconnected"), False)
+                self.assertTrue(client.set(self._keyword("isconnected"), True))
+
+        def test_reload_without_a_config_file_is_refused(self):
+            """Report that a daemon built from a mapping has nothing to re-read."""
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                with self.assertRaises(KeywordError):
+                    client.set(self._keyword("reload"), 1)
 
         def test_repeats_on_the_configured_cadence(self):
             """Read again on the next interval rather than once at startup."""
@@ -240,6 +327,10 @@ class ZmqKeygrabberTests(_Bases.KeygrabberCases):
 
     target_peer = f"hsfei.{_ZmqFixtureDaemon.peer_id}"
 
+    def setUp(self) -> None:
+        self.grabber_endpoint = _free_endpoint()
+        super().setUp()
+
     @classmethod
     def setUpClass(cls):
         cls.endpoint = _free_endpoint()
@@ -251,12 +342,17 @@ class ZmqKeygrabberTests(_Bases.KeygrabberCases):
     def tearDownClass(cls):
         cls.target.stop()
 
+    def _grabber_client(self) -> Client:
+        return Client.zmq(bind=_free_endpoint(),
+                          address_book={f"hispec.{self.grabber.peer_id}":
+                                        self.grabber_endpoint})
+
     def grabber_config(self) -> dict:
         return {
             "peer_id": "keygrabberzmq",
             "group_id": "hispec",
             "transport": "zmq",
-            "bind": _free_endpoint(),
+            "bind": self.grabber_endpoint,
             "address_book": {self.target_peer: self.endpoint},
             "discovery_enabled": False,
             "sink": {"type": "recording"},
@@ -279,6 +375,9 @@ class RabbitMQKeygrabberTests(_Bases.KeygrabberCases):
     @classmethod
     def tearDownClass(cls):
         cls.target.stop()
+
+    def _grabber_client(self) -> Client:
+        return Client.rabbitmq(rabbitmq_url=RABBITMQ_URL)
 
     def grabber_config(self) -> dict:
         return {

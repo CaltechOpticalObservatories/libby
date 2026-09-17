@@ -86,6 +86,12 @@ the docs build does not install the optional `influxdb` extra.
 ```
 
 ```{eval-rst}
+.. automodule:: libby.keygrabber.scheduler
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
 .. automodule:: libby.keygrabber.daemon
    :members:
    :show-inheritance:
