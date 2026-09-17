@@ -114,7 +114,16 @@ class ZmqTransport(Transport):
 
         - ``"peer:<peer_id>"`` or ``"<peer_id>"`` -> direct to that peer
         - ``"broadcast:*"`` -> to all known peers
+
+        Dropped once stopped: sending lazily creates a DEALER per peer, and
+        after ``stop()`` there is nothing left to close it. bamboo's discovery
+        announces from its own thread, which its ``stop()`` sets a flag for
+        rather than joining, so a broadcast can arrive a whole announce
+        interval after this transport was torn down.
         """
+        if self._stop.is_set():
+            return
+
         # 1) broadcast
         if dest.startswith("broadcast:"):
             with self._send_lock:
