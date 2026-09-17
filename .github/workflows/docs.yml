@@ -10,7 +10,6 @@ on:
       - "tox.ini"
       - ".github/workflows/docs.yml"
   pull_request:
-    branches: [main]
     paths:
       - "docs/**"
       - "libby/**"
@@ -22,11 +21,6 @@ permissions:
   contents: read
   pages: write
   id-token: write
-
-# Only one deploy at a time; never cancel one that's already publishing.
-concurrency:
-  group: "pages"
-  cancel-in-progress: false
 
 jobs:
   build:
@@ -53,6 +47,11 @@ jobs:
     # Only publish from pushes to main, not from PRs.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
+    # Scoped to this job rather than the workflow: only one deploy at a time,
+    # never cancelling one already publishing, while PR builds stay parallel
+    concurrency:
+      group: "pages"
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment:
       name: github-pages
