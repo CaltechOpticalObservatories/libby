@@ -34,6 +34,11 @@ QUEUE_DEPTH_PER_WORKER = 4
 # into a SIGKILL.
 DRAIN_DEADLINE_S = 5.0
 
+# How long ``on_stop`` waits for a thread to finish. Outlasts the drain
+# deadline, so a writer that is draining gets to finish rather than being
+# abandoned mid-batch.
+STOP_JOIN_TIMEOUT_S = DRAIN_DEADLINE_S + WRITER_POLL_S * 2
+
 
 class Counters:  # pylint: disable=too-few-public-methods
     """Tallies the daemon reports, guarded for cross-thread increments.
@@ -81,6 +86,7 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         self._queue: "queue.Queue[Tuple[Sample, ...]]" = queue.Queue()
         self._pool: Optional[ThreadPoolExecutor] = None
         self._threads: List[threading.Thread] = []
+        self._writer_thread: Optional[threading.Thread] = None
         self._halt = threading.Event()
         self._in_flight: set[str] = set()
         self._in_flight_lock = threading.Lock()
@@ -100,24 +106,36 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         self._pool = ThreadPoolExecutor(max_workers=self._settings.workers,
                                         thread_name_prefix="keygrabber-read")
         self._halt.clear()
-        self._spawn(self._write_loop, "keygrabber-write")
+        self._writer_thread = self._spawn(self._write_loop, "keygrabber-write")
         self._spawn(self._schedule_loop, "keygrabber-schedule")
         self.logger.info("collecting %d collections with %d workers",
                          len(self._collections), self._settings.workers)
 
     def on_stop(self, libby: Optional[Libby] = None) -> None:
-        """Stop the threads, then give the retry queue a bounded chance to drain."""
+        """Stop the threads and close the sink once the writer has drained it.
+
+        The draining happens on the writer thread rather than here, so only one
+        thread is ever inside the sink. This method just waits for it.
+        """
         self._halt.set()
         if self._pool is not None:
             self._pool.shutdown(wait=True)
             self._pool = None
         for thread in self._threads:
-            thread.join(timeout=WRITER_POLL_S * 8)
+            thread.join(timeout=STOP_JOIN_TIMEOUT_S)
         self._threads = []
-        if self._writer is not None:
-            self._drain()
-            self._writer.close()
-            self._writer = None
+
+        writer, self._writer = self._writer, None
+        if writer is None:
+            return
+        if self._writer_thread is not None and self._writer_thread.is_alive():
+            # Closing while the writer is still inside a sink call would put
+            # two threads in one sink; leave it to process exit instead
+            self.logger.error(
+                "writer thread did not finish within %.1fs; leaving the sink open",
+                STOP_JOIN_TIMEOUT_S)
+            return
+        writer.close()
 
     def make_sink(self) -> Sink:
         """Build the configured sink.
@@ -129,10 +147,11 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
             raise LibbyError("keygrabber config has not been parsed yet")
         return build_sink(self._settings.sink)
 
-    def _spawn(self, target: Callable[[], None], name: str) -> None:
+    def _spawn(self, target: Callable[[], None], name: str) -> threading.Thread:
         thread = threading.Thread(target=target, name=name, daemon=True)
         thread.start()
         self._threads.append(thread)
+        return thread
 
     ### Scheduling
 
@@ -175,10 +194,24 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
                 return
             self._in_flight.add(collection.name)
 
+        if not self._dispatch(collection):
+            # Shut down between the claim and the submit, so give the claim
+            # back rather than leaving the collection marked busy for good
+            with self._in_flight_lock:
+                self._in_flight.discard(collection.name)
+
+    def _dispatch(self, collection: Collection) -> bool:
+        """Submit a tick, returning False once the pool can no longer take one."""
         pool = self._pool
         if pool is None:
-            return
-        pool.submit(self._run_tick, collection)
+            return False
+        try:
+            pool.submit(self._run_tick, collection)
+            return True
+        except RuntimeError:
+            # ThreadPoolExecutor.submit raises once shutdown() has been called,
+            # which races the scheduler thread on the way out
+            return False
 
     def _run_tick(self, collection: Collection) -> None:
         """Resolve if due, read once, and hand the samples to the writer."""
@@ -218,6 +251,8 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
                 continue
             self._write(batch)
             self._flush()
+        # Halted: drain here, on the one thread allowed to touch the sink
+        self._drain()
 
     def _write(self, batch: Tuple[Sample, ...]) -> None:
         writer = self._writer

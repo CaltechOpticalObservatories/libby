@@ -184,6 +184,24 @@ class _Bases:  # pylint: disable=too-few-public-methods
             self.assertGreater(self.grabber.counters.points_written, 0)
             self.assertEqual(self.grabber.counters.write_errors, 0)
 
+        def test_submit_to_a_shut_down_pool_releases_the_claim(self):
+            """Survive the pool shutting down between a claim and its submit.
+
+            ``ThreadPoolExecutor.submit`` raises once ``shutdown`` has been
+            called, which races the scheduler thread on the way out. The claim
+            has to come back, or the collection stays marked busy and every
+            later tick is skipped.
+            """
+            self.grabber.start()
+            self._await_samples()
+            # pylint: disable=protected-access
+            collection = self.grabber._collections[0]
+            self.grabber._pool.shutdown(wait=True)      # left non-None on purpose
+            self.grabber._in_flight.discard(collection.name)
+
+            self.grabber._submit(collection)            # must not raise
+            self.assertNotIn(collection.name, self.grabber._in_flight)
+
         def test_repeats_on_the_configured_cadence(self):
             """Read again on the next interval rather than once at startup."""
             self.grabber.start()
