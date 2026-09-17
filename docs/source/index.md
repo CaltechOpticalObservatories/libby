@@ -4,13 +4,15 @@ Libby is a tiny messaging library built on [Bamboo](https://github.com/CaltechOp
 with pluggable transports (ZMQ or RabbitMQ). It gives you:
 
 - **Keywords** — typed, named values (`show` / `modify`) served over RPC, with
-  a registry, auto-generated `keys.list` / `keys.describe` services, and CLI
-  coercion.
+  a registry, auto-generated `keys.list` / `keys.describe` / `keys.read`
+  services, and CLI coercion.
 - **`LibbyDaemon`** — a base class for peers: lifecycle, discovery, RPC
   handlers, and pub/sub, in a few overrides.
 - **`Client`** — a long-lived, in-process handle for reading and writing
   keywords from scripts, and for blocking on a keyword condition with
   `wait_for` (libby's `ktl.waitFor`).
+- **Keygrabber**: a daemon that polls keywords from other peers and writes them
+  to a time-series database for dashboarding.
 - **`libby` CLI** — a command-line front end for keyword peers
   (`show` / `modify` / `list` / `describe` / `waitfor`).
 
@@ -23,6 +25,7 @@ keywords
 client
 cli
 daemon
+keygrabber
 api/index
 ```
 
@@ -32,4 +35,5 @@ api/index
 - Building a peer that serves keywords? Read {doc}`keywords` then {doc}`daemon`.
 - Writing a script or tool that talks to peers? Read {doc}`client`.
 - Poking at peers interactively? Read {doc}`cli`.
+- Recording keywords for Grafana? Read {doc}`keygrabber`.
 - Looking for a specific class or function? See {doc}`api/index`.
