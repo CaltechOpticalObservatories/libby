@@ -22,7 +22,9 @@ class TickResult:
     read_errors: int
 
 
-class Collection:
+# Config plus the runtime state the control keywords expose; each attribute is
+# one reported value rather than hidden complexity
+class Collection:  # pylint: disable=too-many-instance-attributes
     """Tracks what one peer exposes and turns a read of it into samples.
 
     Resolution is refreshed periodically rather than once, so keywords added by
@@ -36,6 +38,13 @@ class Collection:
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.config = config
+        # Runtime state the control keywords read and write. Plain attributes
+        # rather than lock-guarded: each is a single value written by one
+        # thread and read by the transport's receive thread, and that thread
+        # must never block on a lock a tick might hold.
+        self.enabled = True
+        self.last_sample: Optional[datetime] = None
+        self.lag_s = 0.0
         self._clock = clock
         self._names: Tuple[str, ...] = ()
         self._bulk_read = False
@@ -61,6 +70,10 @@ class Collection:
         if self._resolved_at is None:
             return True
         return self._clock() - self._resolved_at >= self.config.refresh_s
+
+    def invalidate(self) -> None:
+        """Force the next tick to resolve again, after a config change."""
+        self._resolved_at = None
 
     def resolve(self, client: Client) -> Tuple[str, ...]:
         """Ask the peer what it serves and select the configured keywords.

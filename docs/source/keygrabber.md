@@ -20,10 +20,9 @@ pip install libby[influxdb]
 keygrabber -c /etc/hispec/keygrabber.yaml
 ```
 
-It is an ordinary `LibbyDaemon`, so `SIGTERM` stops it cleanly and the
-`shutdown` keyword will too once the control surface lands. On the way out it
-gives its retry queue a bounded chance to drain, so a graceful stop does not
-lose the last tick.
+It is an ordinary `LibbyDaemon`, so `SIGTERM` stops it cleanly and so does
+writing its `shutdown` keyword. On the way out it gives its retry queue a
+bounded chance to drain, so a graceful stop does not lose the last tick.
 
 ## Config
 
@@ -98,6 +97,56 @@ and a tighter interval would be overrun by a single slow peer.
 
 A tick whose predecessor is still running is skipped rather than queued behind
 it, so a wedged peer cannot accumulate overlapping reads.
+
+## Control keywords
+
+The keygrabber is itself a peer, so its cadence and health are reachable with
+the ordinary `libby` verbs, and it can feed the same dashboards it fills.
+
+| Keyword | Type | Access | Meaning |
+|---|---|---|---|
+| `enabled` | bool | R/W | Collect on the configured cadences; false pauses without exiting |
+| `isconnected` | bool | R/W | Last sink write succeeded; write true to request a reconnect |
+| `pointswritten` | int | R | Samples the sink has stored since start |
+| `readerrors` | int | R | Keyword reads that failed |
+| `writeerrors` | int | R | Sink writes that failed |
+| `queuedepth` | int | R | Batches waiting in the retry queue |
+| `skippedticks` | int | R | Ticks skipped because the previous read was still in flight |
+| `droppedbatches` | int | R | Batches discarded because a queue was full |
+| `reload` | trigger | W | Re-read the config file and apply it |
+| `shutdown` | trigger | W | Gracefully stop the daemon |
+| `<collection>.enabled` | bool | R/W | Collect this one collection |
+| `<collection>.interval` | float | R/W | Cadence in seconds |
+| `<collection>.lastsample` | string | R | UTC time of the last successful tick |
+| `<collection>.lag` | float | R | Seconds the last tick ran past its due time |
+
+```bash
+libby show   hispec.keygrabber.%
+libby modify hispec.keygrabber.adc.interval=30
+libby modify hispec.keygrabber.enabled=false
+```
+
+Per-collection keywords contain a dot, and `%` matches within a single segment
+only, so `libby list hispec.keygrabber.%` will not show `adc.enabled`. Use
+`hispec.keygrabber.%.%` for those.
+
+`isconnected` reports whether the last write to the sink succeeded; it does not
+ping the database, because these getters are answered on the transport's
+receive thread and a blocking one would time out every read in flight. Writing
+`true` asks the writer thread to reconnect and returns immediately, so poll the
+keyword for the outcome. There is no manual disconnect.
+
+### reload
+
+`reload` re-reads the config file and applies it to the running collections,
+so keyword selections and cadences can change without a restart. A file that
+fails to parse leaves the running collections untouched and reports why, both
+to the caller and on `lasterror`.
+
+It will not add or remove collections, and says so rather than half-applying:
+libby has no way to withdraw a keyword, so a new collection's control keywords
+could not appear without a restart. Changing `sink` or `workers` also needs a
+restart.
 
 ## How it reads
 
