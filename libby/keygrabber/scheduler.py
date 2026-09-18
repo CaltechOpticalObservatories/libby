@@ -77,9 +77,10 @@ class Scheduler:
                     claimed.append(collection)
                 # Rescheduled from now, not from when it was due, so a long
                 # stall cannot leave a burst of catch-up ticks that can only
-                # skip. Cadence drifts by the loop's own latency instead.
+                # skip. Cadence drifts by the loop's own latency instead, and
+                # stretches while the peer is failing.
                 heapq.heappush(
-                    self._due, (now + collection.config.interval_s, name))
+                    self._due, (now + collection.backoff_interval_s(), name))
         return tuple(claimed), skipped
 
     def update(self, collection: Collection) -> None:

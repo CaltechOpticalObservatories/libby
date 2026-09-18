@@ -13,6 +13,14 @@ from .sink import Sample
 
 BULK_READ_SERVICE = "keys.read"
 
+# Failures tolerated at the configured cadence before a collection starts
+# reading less often. A peer restarting should not trigger a backoff.
+FAILURES_BEFORE_BACKOFF = 3
+
+# Ceiling on how far the interval is stretched while a peer stays silent, so a
+# recovered peer is picked up again within a bounded time
+MAX_BACKOFF_MULTIPLIER = 32
+
 
 @dataclass(frozen=True)
 class TickResult:
@@ -45,6 +53,7 @@ class Collection:  # pylint: disable=too-many-instance-attributes
         self.enabled = True
         self.last_sample: Optional[datetime] = None
         self.lag_s = 0.0
+        self.consecutive_failures = 0
         self._clock = clock
         self._names: Tuple[str, ...] = ()
         self._bulk_read = False
@@ -74,6 +83,27 @@ class Collection:  # pylint: disable=too-many-instance-attributes
     def invalidate(self) -> None:
         """Force the next tick to resolve again, after a config change."""
         self._resolved_at = None
+
+    def note_failure(self) -> None:
+        """Record a tick that read nothing."""
+        self.consecutive_failures += 1
+
+    def note_success(self) -> None:
+        """Record a tick that read something, ending any backoff."""
+        self.consecutive_failures = 0
+
+    def backoff_interval_s(self) -> float:
+        """Return the interval to use next, stretched while the peer fails.
+
+        A peer that is down would otherwise be retried, and logged about, on
+        its configured cadence indefinitely. Backing off keeps a dead daemon
+        from dominating both the logs and the read budget, while the cap keeps
+        a recovered one from waiting long to be noticed.
+        """
+        if self.consecutive_failures < FAILURES_BEFORE_BACKOFF:
+            return self.config.interval_s
+        overshoot = self.consecutive_failures - FAILURES_BEFORE_BACKOFF + 1
+        return self.config.interval_s * min(2 ** overshoot, MAX_BACKOFF_MULTIPLIER)
 
     def resolve(self, client: Client) -> Tuple[str, ...]:
         """Ask the peer what it serves and select the configured keywords.

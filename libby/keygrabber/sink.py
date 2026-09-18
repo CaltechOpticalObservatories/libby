@@ -78,7 +78,9 @@ class Sink(Protocol):
         """Release the connection."""
 
 
-class RetryingWriter:
+# The extra attributes are the queue, the backoff and the tallies it reports,
+# each one value rather than hidden state
+class RetryingWriter:  # pylint: disable=too-many-instance-attributes
     """Wraps a sink, holding failed batches in a bounded queue for retry.
 
     Retrying is backend-independent, so it lives here rather than inside any
@@ -102,6 +104,7 @@ class RetryingWriter:
         self._clock = clock
         self._pending: Deque[Tuple[Sample, ...]] = deque()
         self._failures = 0
+        self._failed_attempts = 0
         self._retry_at = 0.0
         self._dropped_batches = 0
 
@@ -114,6 +117,22 @@ class RetryingWriter:
     def dropped_batches(self) -> int:
         """Number of batches discarded because the queue was full."""
         return self._dropped_batches
+
+    @property
+    def healthy(self) -> bool:
+        """Whether the most recent attempt on the sink succeeded.
+
+        Worth asking for, because :meth:`write` deliberately does not raise
+        when a batch fails: it queues it and returns 0, which is what makes
+        retrying possible and what stops a caller learning about the failure
+        from an exception.
+        """
+        return self._failures == 0
+
+    @property
+    def failed_attempts(self) -> int:
+        """Total attempts on the sink that failed, including retries."""
+        return self._failed_attempts
 
     def write(self, samples: Sequence[Sample]) -> int:
         """Write a batch now, or queue it if the sink is in backoff."""
@@ -176,6 +195,7 @@ class RetryingWriter:
 
     def _arm_backoff(self) -> None:
         self._failures += 1
+        self._failed_attempts += 1
         delay = min(self._policy.base_backoff_s * (2 ** (self._failures - 1)),
                     self._policy.max_backoff_s)
         self._retry_at = self._clock() + delay

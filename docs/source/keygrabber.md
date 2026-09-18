@@ -98,6 +98,14 @@ and a tighter interval would be overrun by a single slow peer.
 A tick whose predecessor is still running is skipped rather than queued behind
 it, so a wedged peer cannot accumulate overlapping reads.
 
+A collection that keeps failing reads less often. After three consecutive
+failures its interval doubles each time, up to 32x, until a read succeeds.
+Without that, a daemon that is down would be retried on its configured cadence
+indefinitely, logging an error every time and rewriting `lasterror` with it.
+Logging follows the same shape: the first failures are reported, then the
+backoff is announced once, then it stays quiet until the peer answers again.
+The cap means a peer that comes back is picked up within a bounded time.
+
 ## Control keywords
 
 The keygrabber is itself a peer, so its cadence and health are reachable with
@@ -135,6 +143,10 @@ ping the database, because these getters are answered on the transport's
 receive thread and a blocking one would time out every read in flight. Writing
 `true` asks the writer thread to reconnect and returns immediately, so poll the
 keyword for the outcome. There is no manual disconnect.
+
+A failing sink is visible from three keywords together: `isconnected` goes
+false, `queuedepth` climbs as batches wait, and `pointswritten` stops moving.
+`writeerrors` counts every failed attempt including retries.
 
 ### reload
 

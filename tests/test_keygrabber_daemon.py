@@ -17,7 +17,7 @@ from typing import List, Sequence
 
 from libby import Client, KeywordError
 from libby.daemon import LibbyDaemon
-from libby.keygrabber import KeygrabberDaemon, Sample
+from libby.keygrabber import KeygrabberDaemon, Sample, SinkWriteError
 from libby.rabbitmq_transport import RabbitMQTransport
 
 SETTLE_TIMEOUT_S = 15.0
@@ -100,6 +100,14 @@ class _RecordingSink:
         """Return a copy of the recorded samples."""
         with self._lock:
             return list(self.samples)
+
+
+class _FailingSink(_RecordingSink):
+    """Sink that refuses every write, as an unreachable database does."""
+
+    def write(self, samples: Sequence[Sample]) -> int:
+        """Reject the batch the way a dead backend does."""
+        raise SinkWriteError("backend unreachable")
 
 
 class _TestKeygrabber(KeygrabberDaemon):
@@ -288,6 +296,29 @@ class _Bases:  # pylint: disable=too-few-public-methods
             with self._grabber_client() as client:
                 with self.assertRaises(KeywordError):
                     client.set(self._keyword("reload"), 1)
+
+        def test_a_dead_sink_is_reported_not_hidden(self):
+            """Report an unwritable sink, rather than looking healthy.
+
+            ``RetryingWriter.write`` queues a failed batch and returns 0
+            instead of raising, so health has to be read back from the writer.
+            Getting this wrong showed a live daemon with queued batches,
+            nothing written, and ``isconnected`` still true.
+            """
+            self.grabber.sink = _FailingSink()
+            self.grabber.start()
+            deadline = time.monotonic() + SETTLE_TIMEOUT_S
+            while time.monotonic() < deadline:
+                if self.grabber.counters.write_errors:
+                    break
+                time.sleep(0.05)
+
+            with self._grabber_client() as client:
+                self.assertFalse(client.get(self._keyword("isconnected")))
+                self.assertEqual(client.get(self._keyword("pointswritten")), 0)
+                self.assertGreater(client.get(self._keyword("writeerrors")), 0)
+                self.assertGreater(client.get(self._keyword("queuedepth")), 0)
+                self.assertIsNotNone(client.get(self._keyword("lasterror")))
 
         def test_repeats_on_the_configured_cadence(self):
             """Read again on the next interval rather than once at startup."""
