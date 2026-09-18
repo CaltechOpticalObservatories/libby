@@ -14,7 +14,7 @@ from ..config import ConfigError, DaemonConfigLoader, with_env_overrides
 from ..daemon import LibbyDaemon
 from ..errors import LibbyError
 from ..libby import Libby
-from .collection import Collection
+from .collection import FAILURES_BEFORE_BACKOFF, Collection
 from .config import TIMEOUT_HEADROOM, KeygrabberConfig, build_sink, parse_config
 from .scheduler import Scheduler
 from .sink import RetryingWriter, Sample, Sink
@@ -72,6 +72,12 @@ class Counters:  # pylint: disable=too-few-public-methods
         with self._lock:
             for name, delta in deltas.items():
                 setattr(self, name, getattr(self, name) + delta)
+
+    def set(self, **values: int) -> None:
+        """Set one or more counters to an absolute value."""
+        with self._lock:
+            for name, value in values.items():
+                setattr(self, name, value)
 
 
 # Coordinates config, client, sink, collections and three kinds of thread;
@@ -364,12 +370,37 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
                 self.counters.add(read_errors=result.read_errors)
             if result.samples:
                 self._enqueue(result.samples)
-            collection.last_sample = datetime.now(timezone.utc)
+                collection.last_sample = datetime.now(timezone.utc)
+                self._note_success(collection)
+            elif collection.keyword_count:
+                self._note_failure(collection, "every read failed")
         except LibbyError as exc:
             self.counters.add(read_errors=1)
-            self.logger.error("collection %s read failed: %s", collection.name, exc)
+            self._note_failure(collection, str(exc))
         finally:
             self._scheduler.release(collection.name)
+
+    def _note_failure(self, collection: Collection, reason: str) -> None:
+        """Count a failed tick, and log only while that is still news.
+
+        A peer that stays down would otherwise produce an error every interval
+        for as long as it is down, which buries everything else and keeps
+        rewriting ``lasterror``.
+        """
+        collection.note_failure()
+        failures = collection.consecutive_failures
+        if failures < FAILURES_BEFORE_BACKOFF:
+            self.logger.error("collection %s failed: %s", collection.name, reason)
+        elif failures == FAILURES_BEFORE_BACKOFF:
+            self.logger.error(
+                "collection %s has failed %d times, backing off to %.0fs: %s",
+                collection.name, failures, collection.backoff_interval_s(), reason)
+
+    def _note_success(self, collection: Collection) -> None:
+        """Clear a collection's backoff, saying so if it had been failing."""
+        if collection.consecutive_failures >= FAILURES_BEFORE_BACKOFF:
+            self.logger.info("collection %s is answering again", collection.name)
+        collection.note_success()
 
     def _enqueue(self, samples: Sequence[Sample]) -> None:
         try:
@@ -417,11 +448,12 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
             return
         try:
             self.counters.add(points_written=writer.write(batch))
-            self._sink_healthy = True
         except LibbyError as exc:
-            self.counters.add(write_errors=1)
-            self._sink_healthy = False
-            self.logger.error("sink write failed: %s", exc)
+            # A sink raising something other than SinkWriteError is a bug in
+            # that sink; the retry writer turns the expected failure into a
+            # queued batch instead
+            self.logger.error("sink write raised: %s", exc)
+        self._track_sink_health(writer)
 
     def _flush(self) -> None:
         writer = self._writer
@@ -430,9 +462,27 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         try:
             self.counters.add(points_written=writer.flush_due())
         except LibbyError as exc:
-            self.counters.add(write_errors=1)
-            self._sink_healthy = False
-            self.logger.error("sink retry failed: %s", exc)
+            self.logger.error("sink retry raised: %s", exc)
+        self._track_sink_health(writer)
+
+    def _track_sink_health(self, writer: RetryingWriter) -> None:
+        """Mirror the writer's view, and log only when it changes.
+
+        ``RetryingWriter.write`` queues a failed batch and returns 0 rather
+        than raising, which is what makes retrying possible. It also means a
+        failure cannot be noticed from an exception here, so health and the
+        error count are read back from the writer instead.
+        """
+        self.counters.set(write_errors=writer.failed_attempts)
+        healthy = writer.healthy
+        if healthy == self._sink_healthy:
+            return
+        self._sink_healthy = healthy
+        if healthy:
+            self.logger.info("sink writes are succeeding again")
+        else:
+            self.logger.error("sink writes are failing, %d batch(es) queued",
+                              writer.queue_depth)
 
     def _drain(self) -> None:
         """Write whatever is still queued, under a deadline."""
