@@ -36,9 +36,13 @@ class Libby:
         discover: bool = False,
         discover_interval_s: float = 5.0,
         hello_on_start: bool = True,
+        is_daemon: bool = False,
     ):
         self.self_id = self_id
         self.transport = transport
+        # Every Libby answers keys.list, so a broadcast reaches clients too.
+        # Only LibbyDaemon sets this, and only these are listed as peers
+        self.is_daemon = is_daemon
         self.keys = KeyRegistry()
         self.proto = Protocol(transport=self.transport, self_id=self_id, keys=self.keys)
 
@@ -80,6 +84,7 @@ class Libby:
         discover_interval_s: float = 5.0,
         hello_on_start: bool = True,
         group_id: Optional[str] = None,
+        is_daemon: bool = False,
     ) -> "Libby":
         try:
             from .zmq_transport import ZmqTransport
@@ -101,6 +106,7 @@ class Libby:
             discover=discover,
             discover_interval_s=discover_interval_s,
             hello_on_start=hello_on_start,
+            is_daemon=is_daemon,
         )
 
     @classmethod
@@ -111,6 +117,8 @@ class Libby:
         keys: Optional[List[str]] = None,
         callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
         group_id: Optional[str] = None,
+        *,
+        is_daemon: bool = False,
     ) -> "Libby":
         """
         Create a Libby instance using RabbitMQ transport.
@@ -154,6 +162,7 @@ class Libby:
             discover=False,
             discover_interval_s=0,
             hello_on_start=False,
+            is_daemon=is_daemon,
         )
 
     # lifecycle
@@ -260,6 +269,7 @@ class Libby:
             "ok": True,
             "matches": match_pattern(pattern, self._keywords),
             "services": self._served_services(),
+            "is_daemon": self.is_daemon,
         }
 
     def _served_services(self) -> List[str]:

@@ -134,5 +134,11 @@ default) rather than returning on the first reply, and a daemon that is down
 is simply absent. Over ZMQ the broadcast reaches only the daemons in the
 address book; over RabbitMQ the broker reaches all of them.
 
+Only daemons come back. Every `Libby` serves `keys.list`, so another
+`Client` answers the broadcast as well, but `LibbyDaemon` is the only thing
+that builds its `Libby` with `is_daemon=True` and the rest are filtered out.
+A peer running a libby from before that flag omits it and is still listed,
+so this does not hide daemons that have yet to be redeployed.
+
 See {mod}`libby.client` in the {doc}`API reference </api/index>` for the
 full method signatures.

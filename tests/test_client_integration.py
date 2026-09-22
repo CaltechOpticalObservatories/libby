@@ -229,12 +229,15 @@ class _Bases:  # pylint: disable=too-few-public-methods
         """Broadcast peer listing that must hold identically on every transport.
 
         Concrete subclasses start two fixture daemons in ``GROUP_ID`` and one
-        in ``OTHER_GROUP_ID``, and supply ``client`` plus their qualified ids.
+        in ``OTHER_GROUP_ID``, plus a plain ``Client`` whose ``self_id`` is
+        shaped like a peer in ``GROUP_ID``, and supply ``client`` plus the
+        qualified ids.
         """
 
         client: Client
         group_peers: Tuple[str, str]
         other_peer: str
+        impostor_peer: str
 
         def test_peers_lists_every_daemon_in_the_group(self):
             """Find the group's daemons by wildcard, and no other group's."""
@@ -249,6 +252,12 @@ class _Bases:  # pylint: disable=too-few-public-methods
             for peer in (*self.group_peers, self.other_peer):
                 self.assertIn(peer, found)
             self.assertNotIn(DEFAULT_SELF_ID, found)
+
+        def test_peers_omits_a_client_that_answers_the_broadcast(self):
+            """Leave out a plain Client, which serves keys.list like a daemon does."""
+            found = self.client.peers(f"{GROUP_ID}.%", timeout_s=LISTING_TIMEOUT_S)
+            self.assertNotIn(self.impostor_peer, found)
+            self.assertIn(self.group_peers[0], found)
 
         def test_peers_with_an_exact_id_confirms_one_daemon(self):
             """Resolve an exact <group>.<daemon> to just that daemon."""
@@ -372,11 +381,14 @@ class RabbitMQPeerListingTests(_Bases.PeerListingCases):
         ]
         cls.group_peers = (f"{GROUP_ID}.listingonermq", f"{GROUP_ID}.listingtwormq")
         cls.other_peer = f"{OTHER_GROUP_ID}.listingotherrmq"
+        cls.impostor_peer = f"{GROUP_ID}.impostorrmq"
+        cls.impostor = Client.rabbitmq(self_id=cls.impostor_peer, rabbitmq_url=RABBITMQ_URL)
         cls.client = Client.rabbitmq(rabbitmq_url=RABBITMQ_URL)
 
     @classmethod
     def tearDownClass(cls):
         cls.client.close()
+        cls.impostor.close()
         for daemon in cls.daemons:
             daemon.stop()
 
@@ -397,11 +409,16 @@ class ZmqPeerListingTests(_Bases.PeerListingCases):
         ]
         cls.group_peers = (f"{GROUP_ID}.listingonezmq", f"{GROUP_ID}.listingtwozmq")
         cls.other_peer = f"{OTHER_GROUP_ID}.listingotherzmq"
+        cls.impostor_peer = f"{GROUP_ID}.impostorzmq"
+        impostor_endpoint = _free_endpoint()
+        address_book[cls.impostor_peer] = impostor_endpoint
+        cls.impostor = Client.zmq(self_id=cls.impostor_peer, bind=impostor_endpoint)
         cls.client = Client.zmq(bind=_free_endpoint(), address_book=address_book)
 
     @classmethod
     def tearDownClass(cls):
         cls.client.close()
+        cls.impostor.close()
         for daemon in cls.daemons:
             daemon.stop()
 

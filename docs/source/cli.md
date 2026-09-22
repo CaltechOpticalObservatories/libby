@@ -86,6 +86,10 @@ full timeout (default 1s, `--timeout` to change it) instead of returning on
 the first answer. A daemon that is down simply doesn't appear. Exit code 3
 means nothing answered.
 
+Only daemons are listed. Every libby connection answers `keys.list`, so other
+clients reply to the broadcast too, and they identify themselves as clients
+and are left out.
+
 Over ZMQ the broadcast only reaches daemons in the address book (`peers:` in
 `cli_config.yaml`, or `--addr`); over RabbitMQ the broker reaches everyone.
 
