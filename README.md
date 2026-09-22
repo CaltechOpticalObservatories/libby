@@ -39,18 +39,20 @@ peers are up. It broadcasts a `keys.list` that every peer answers, so it works
 the same on both transports and needs nothing configured beyond the transport
 itself.
 
-Bamboo's own hello/discovery is a separate mechanism and is not a way to find
-peers today:
+Discovery, in the sense of a peer table you can ask who is alive, is not
+implemented. It may be one day; until then use the broadcast above rather than
+these:
 
-- `Protocol` never instantiates a `PeerTable`, so `Libby.peers_alive()` returns
-  `{}` and `Libby.wait_for_peer()` always fails, on either transport.
-- `Libby.rabbitmq()` doesn't start discovery at all. The broker routes messages;
-  it does not tell a peer who else is connected.
-- On ZMQ a hello only reaches peers already in the sender's address book, so a
-  client learns nothing about a daemon that hasn't been told about the client.
+- `Libby.peers_alive()` returns `{}` and `Libby.wait_for_peer()` always fails,
+  on either transport, because `Protocol` never instantiates a `PeerTable`.
+- ZMQ runs bamboo's hello, but only toward peers already in the sender's
+  address book, and nothing consumes it for liveness. A client learns nothing
+  about a daemon that has not been told about the client, so
   `Libby.knows_key()` stays False in the usual one-sided setup.
+- `Libby.rabbitmq()` does not start hello at all. The broker routes messages;
+  it does not tell a peer who else is connected.
 
-`LibbyDaemon`'s `discovery_enabled` / `on_hello` control that mechanism, not
+`LibbyDaemon`'s `discovery_enabled` / `on_hello` control bamboo's hello, not
 the broadcast above.
 
 ## Testing
