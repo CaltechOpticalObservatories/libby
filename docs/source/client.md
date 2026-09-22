@@ -26,8 +26,9 @@ client = Client.zmq(address_book={"hsfei_pickoff": "tcp://host:5555"})
   units, flags); `set(name, value)` → the value the daemon applied.
 - `wait_for(expression, timeout)` → blocks until a keyword satisfies a
   comparison; see below.
-- `list(pattern)` → matching qualified names; `describe(name)` → one keyword's
-  metadata; `read(names)` → many keywords in one request per peer; see below.
+- `list(pattern)` → matching qualified names; `peers(pattern)` → the live
+  daemons; `describe(name)` → one keyword's metadata; `read(names)` → many
+  keywords in one request per peer; see below.
 - Failures raise rather than return sentinels: `KeywordError` when the daemon
   rejects a get/set (its message is on `.error`), `LibbyTimeout` when a
   request isn't answered, both subclasses of `LibbyError`. `set` accepts
@@ -112,6 +113,26 @@ Checking `services` is the only reliable test: `Libby.knows_key` reads the
 discovery registry, which stays empty without discovery, and calling
 `keys.read` to see what happens cannot distinguish an old peer from a dead
 one.
+
+## Finding daemons
+
+`peers` returns the live daemons matching a `<group>.<daemon>` pattern, and
+`peer_listings` returns each one's keywords from the same round trip:
+
+```python
+client.peers("hsfei.%")              # ["hsfei.adc", "hsfei.atcpress", ...]
+client.peers()                       # every daemon, any group
+client.peer_listings("hsfei.%")      # {"hsfei.adc": ["isconnected", ...], ...}
+```
+
+`list` accepts the same wildcards in its group and daemon segments, so
+`client.list("hsfei.%.isconnected")` reads across the group.
+
+These broadcast a single `keys.list`, which every daemon answers. Nothing
+says how many daemons exist, so they wait the full `timeout_s` (1s by
+default) rather than returning on the first reply, and a daemon that is down
+is simply absent. Over ZMQ the broadcast reaches only the daemons in the
+address book; over RabbitMQ the broker reaches all of them.
 
 See {mod}`libby.client` in the {doc}`API reference </api/index>` for the
 full method signatures.

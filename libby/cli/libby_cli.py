@@ -1,4 +1,5 @@
 """Libby CLI — show/modify keywords on libby peers, plus raw req/sub."""
+# PYTHON_ARGCOMPLETE_OK
 from __future__ import annotations
 
 import argparse
@@ -10,9 +11,19 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
+import argcomplete
+from argcomplete.shell_integration import shellcode
+
+from libby.cli.completion import (
+    CompletionCache,
+    Listings,
+    address_candidates,
+    cached_listings,
+    peer_candidates,
+)
 from libby.config_resolve import (
     DEFAULT_BIND,
     DEFAULT_CONFIG_PATH,
@@ -22,11 +33,11 @@ from libby.config_resolve import (
     resolve_rabbitmq_url,
     resolve_transport,
 )
-from libby.client import DEFAULT_POLL_S, Client, WaitResult
+from libby.client import DEFAULT_BROADCAST_TIMEOUT_S, DEFAULT_POLL_S, Client, WaitResult
 from libby.errors import KeywordError, LibbyError
 from libby.expression import parse_comparison
 from libby.libby import Libby
-from libby.naming import coerce_value, parse_keyword, peer_id
+from libby.naming import coerce_value, parse_address_pattern, parse_keyword, peer_id
 from libby.response import unwrap
 
 DEFAULT_SELF_ID = "cli"
@@ -347,15 +358,22 @@ def cmd_show(namespace: argparse.Namespace) -> int:
 
 def cmd_list(namespace: argparse.Namespace) -> int:
     config = load_cli_config(namespace.config)
-    # Reject a malformed address here, before opening a transport, so it stays
-    # an argument error; Client.list parses it again for the peer id
-    parse_keyword(namespace.pattern, allow_pattern=True)
-    timeout = namespace.timeout if namespace.timeout is not None else DEFAULT_TIMEOUT_S
+    # Parse before opening a transport so a malformed pattern stays an argument error
+    address = parse_address_pattern(namespace.pattern)
+    # A pattern that spans daemons is answered by broadcast, which always runs
+    # to its timeout, so it gets the shorter discovery default
+    one_daemon = address.keyword is not None and not address.spans_peers
+    default_timeout = DEFAULT_TIMEOUT_S if one_daemon else DEFAULT_BROADCAST_TIMEOUT_S
+    timeout = namespace.timeout if namespace.timeout is not None else default_timeout
 
     lib: Optional[Libby] = None
     try:
         lib = _mk_libby(namespace, config)
-        qualified_names = Client(lib).list(namespace.pattern, timeout_s=timeout)
+        client = Client(lib)
+        if address.keyword is None:
+            qualified_names = client.peers(namespace.pattern, timeout_s=timeout)
+        else:
+            qualified_names = client.list(namespace.pattern, timeout_s=timeout)
         if not qualified_names:
             if namespace.json:
                 print(json.dumps([], indent=2))
@@ -570,6 +588,71 @@ def cmd_sub(namespace: argparse.Namespace) -> int:
         print("[libby sub] stopped")
 
 
+def _connection_key(namespace: argparse.Namespace, config: Dict[str, Any]) -> str:
+    """Name the broker or address book a completion cache entry belongs to."""
+    if resolve_transport(namespace.transport, config) == "rabbitmq":
+        return f"rabbitmq {_redact_url(resolve_rabbitmq_url(namespace.rabbitmq_url, config))}"
+    return f"zmq {sorted(resolve_address_book(config, namespace.addr).items())}"
+
+
+def _discover_listings(namespace: argparse.Namespace) -> Listings:
+    config = load_cli_config(namespace.config)
+
+    def fetch(timeout_s: float) -> Listings:
+        lib = _mk_libby(namespace, config)
+        try:
+            return Client(lib).peer_listings(timeout_s=timeout_s)
+        finally:
+            lib.stop()
+
+    return cached_listings(_connection_key(namespace, config), fetch, CompletionCache())
+
+
+# argcomplete also passes ``action`` and ``parser``, hence the catch-all
+def _complete_address(prefix: str, parsed_args: argparse.Namespace, **_: Any) -> List[str]:
+    """Complete a partial <group>.<daemon>.<keyword> argument."""
+    try:
+        return address_candidates(prefix, _discover_listings(parsed_args))
+    except Exception:  # pylint: disable=broad-exception-caught
+        # A completer must never break the shell; an unreachable broker completes nothing
+        return []
+
+
+def _complete_peer(prefix: str, parsed_args: argparse.Namespace, **_: Any) -> List[str]:
+    """Complete a partial <group>.<daemon> argument."""
+    try:
+        return peer_candidates(prefix, _discover_listings(parsed_args))
+    except Exception:  # pylint: disable=broad-exception-caught
+        return []
+
+
+def _completed_by(
+    action: argparse.Action,
+    completer: Callable[..., List[str]] = _complete_address,
+) -> argparse.Action:
+    """Attach a completer to an argument; argcomplete finds it by attribute."""
+    setattr(action, "completer", completer)
+    return action
+
+
+def cmd_completion(namespace: argparse.Namespace) -> int:
+    """Print the shell code that wires TAB completion to the libby executable."""
+    print(shellcode(["libby"], shell=namespace.shell))
+    return 0
+
+
+def _add_completion_verb(sub: argparse._SubParsersAction) -> None:
+    """Register the completion verb, the one verb with no connection flags."""
+    parser = sub.add_parser(
+        "completion",
+        help="Print shell code that enables TAB completion; eval it from your shell rc",
+    )
+    parser.add_argument("shell", choices=("bash", "zsh"))
+    # main() reads the common logging flags, which this verb has no use for
+    parser.set_defaults(func=cmd_completion, config=None, log_level=None,
+                        log_file=None, verbose=False)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="libby",
@@ -607,28 +690,31 @@ def build_parser() -> argparse.ArgumentParser:
     # argparse %-formats help strings, so a literal % has to be escaped
     p_show = sub.add_parser("show", help="Read a keyword's value (%% allowed in keyword)")
     add_common(p_show)
-    p_show.add_argument("keyword",
-                        help="<group>.<daemon>.<keyword> (%% allowed in keyword segment)")
+    _completed_by(p_show.add_argument(
+        "keyword", help="<group>.<daemon>.<keyword> (%% allowed in keyword segment)"))
     p_show.set_defaults(func=cmd_show)
 
-    p_list = sub.add_parser("list", help="List keyword names matching a pattern")
+    p_list = sub.add_parser("list", help="List keyword names, or daemons, matching a pattern")
     add_common(p_list)
-    p_list.add_argument("pattern",
-                        help="<group>.<daemon>.<keyword-pattern> (%% wildcard in keyword)")
+    _completed_by(p_list.add_argument(
+        "pattern",
+        help="<group>.<daemon>[.<keyword-pattern>] (%% wildcard in any segment; "
+             "without a keyword segment, list the matching daemons)",
+    ))
     p_list.set_defaults(func=cmd_list)
 
     p_describe = sub.add_parser("describe", help="Show metadata for a keyword")
     add_common(p_describe)
-    p_describe.add_argument("keyword",
-                            help="<group>.<daemon>.<keyword> (exact, no wildcards)")
+    _completed_by(p_describe.add_argument(
+        "keyword", help="<group>.<daemon>.<keyword> (exact, no wildcards)"))
     p_describe.set_defaults(func=cmd_describe)
 
     p_modify = sub.add_parser("modify", help="Set a keyword's value")
     add_common(p_modify)
-    p_modify.add_argument(
+    _completed_by(p_modify.add_argument(
         "keyword",
         help="<group>.<daemon>.<keyword>=<value> or <group>.<daemon>.<keyword> (+ value arg)",
-    )
+    ))
     p_modify.add_argument("value", nargs="?",
                           help="Value (if not using = form)")
     p_modify.set_defaults(func=cmd_modify)
@@ -649,9 +735,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="'$<group>.<daemon>.<keyword> <op> <value>'; "
              "op is ==, !=, <, <=, >, >=",
     )
-    p_waitfor.add_argument("-d", "--daemon", metavar="<group>.<daemon>",
-                           help="Default daemon, so the expression can name a "
-                                "keyword bare (e.g. '$ismoving == false')")
+    _completed_by(p_waitfor.add_argument(
+        "-d", "--daemon", metavar="<group>.<daemon>",
+        help="Default daemon, so the expression can name a "
+             "keyword bare (e.g. '$ismoving == false')"), _complete_peer)
     p_waitfor.add_argument("--case", action="store_true",
                            help="Compare strings case-sensitively "
                                 "(default: case-insensitive)")
@@ -672,11 +759,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_sub.add_argument("topics", nargs="+", help="Topic(s) to subscribe to")
     p_sub.set_defaults(func=cmd_sub)
 
+    _add_completion_verb(sub)
+
     return parser
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    namespace = build_parser().parse_args(argv)
+    parser = build_parser()
+    argcomplete.autocomplete(parser)
+    namespace = parser.parse_args(argv)
 
     try:
         cli_config = load_cli_config(namespace.config)

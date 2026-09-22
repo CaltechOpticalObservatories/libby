@@ -18,10 +18,11 @@ from .config_resolve import (
     resolve_rabbitmq_url,
     resolve_transport,
 )
-from .errors import LibbyError, LibbyTimeout
+from .errors import KeywordNameError, LibbyError, LibbyTimeout
 from .expression import parse_comparison
-from .libby import Libby
-from .naming import parse_keyword, peer_id
+from .keyword import match_pattern
+from .libby import DEFAULT_BROADCAST_TIMEOUT_S, Libby
+from .naming import parse_address_pattern, parse_keyword, peer_id
 from .response import unwrap
 
 DEFAULT_SELF_ID = "libby-client"
@@ -163,9 +164,53 @@ class Client:
         """List qualified keyword names matching ``<group>.<daemon>.<pattern>``.
 
         Returns fully qualified names, so the result feeds straight back into
-        :meth:`get`, :meth:`show` or :meth:`read`.
+        :meth:`get`, :meth:`show` or :meth:`read`. A ``%`` in the group or
+        daemon segment spans daemons by broadcast, so that form waits the
+        full ``timeout_s`` (see :meth:`peers`).
         """
-        return list(self.listing(pattern, timeout_s=timeout_s).names)
+        address = parse_address_pattern(pattern)
+        if address.keyword is None:
+            raise KeywordNameError(f"list needs a keyword pattern: {pattern}")
+        if not address.spans_peers:
+            return list(self.listing(pattern, timeout_s=timeout_s).names)
+        listings = self.peer_listings(pattern, timeout_s=timeout_s)
+        return [f"{peer}.{name}" for peer in sorted(listings) for name in listings[peer]]
+
+    def peers(
+        self,
+        pattern: str = "%.%",
+        *,
+        timeout_s: float = DEFAULT_BROADCAST_TIMEOUT_S,
+    ) -> List[str]:
+        """List the live daemons matching ``<group>.<daemon>`` as ``group.daemon`` ids.
+
+        Every daemon answers a broadcast ``keys.list``, so this waits the full
+        ``timeout_s`` rather than returning on the first reply. Over ZMQ only
+        daemons in the address book are asked.
+        """
+        return sorted(self.peer_listings(pattern, timeout_s=timeout_s))
+
+    def peer_listings(
+        self,
+        pattern: str = "%.%",
+        *,
+        timeout_s: float = DEFAULT_BROADCAST_TIMEOUT_S,
+    ) -> Dict[str, List[str]]:
+        """Map each live daemon matching ``pattern`` to its keyword names.
+
+        A keyword segment in ``pattern`` narrows the names; without one every
+        keyword is listed. Same timeout semantics as :meth:`peers`.
+        """
+        address = parse_address_pattern(pattern)
+        replies = self._libby.broadcast_request(
+            "keys.list", {"pattern": address.keyword or "%"}, timeout_s=timeout_s)
+        wanted = set(match_pattern(address.peer_pattern,
+                                   (reply.peer_id for reply in replies)))
+        return {
+            reply.peer_id: list(reply.payload.get("matches", []))
+            for reply in replies
+            if reply.peer_id in wanted and reply.payload.get("ok")
+        }
 
     def describe(self, name: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:
         """Read one keyword's metadata (type, access, units, timeout_s)."""
