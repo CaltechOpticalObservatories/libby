@@ -136,9 +136,9 @@ address book; over RabbitMQ the broker reaches all of them.
 
 Only daemons come back. Every `Libby` serves `keys.list`, so another
 `Client` answers the broadcast as well, but `LibbyDaemon` is the only thing
-that builds its `Libby` with `is_daemon=True` and the rest are filtered out.
-A peer running a libby from before that flag omits it and is still listed,
-so this does not hide daemons that have yet to be redeployed.
+that builds its `Libby` with `is_daemon=True`, and a reply counts only if it
+reports that. A peer on a libby predating the flag is not listed, so the
+daemons have to be running a libby this new to be found.
 
 See {mod}`libby.client` in the {doc}`API reference </api/index>` for the
 full method signatures.

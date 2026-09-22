@@ -202,16 +202,14 @@ class Client:
         keyword is listed. Same timeout semantics as :meth:`peers`.
 
         Clients answer the broadcast too, since every ``Libby`` serves
-        ``keys.list``, so a reply counts only if it does not report itself as
-        a non-daemon. A peer on a libby predating that flag omits it and is
-        still listed; only a peer on this libby can broadcast at all, and
-        those always report it.
+        ``keys.list``, so a reply counts only if it reports itself as a
+        daemon.
         """
         address = parse_address_pattern(pattern)
         replies = self._libby.broadcast_request(
             "keys.list", {"pattern": address.keyword or "%"}, timeout_s=timeout_s)
         daemons = [reply for reply in replies
-                   if reply.payload.get("ok") and reply.payload.get("is_daemon", True)]
+                   if reply.payload.get("ok") and reply.payload.get("is_daemon")]
         wanted = set(match_pattern(address.peer_pattern,
                                    (reply.peer_id for reply in daemons)))
         return {

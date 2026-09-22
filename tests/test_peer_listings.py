@@ -43,10 +43,9 @@ class PeerListingFilterTests(unittest.TestCase):
     def test_drops_a_client(self):
         self.assertEqual(self._peers(_reply("hsfei.impostor", is_daemon=False)), [])
 
-    def test_keeps_a_reply_predating_the_flag(self):
-        # An older libby omits is_daemon; only this libby can broadcast at all,
-        # so a missing flag means a daemon that has not been redeployed yet
-        self.assertEqual(self._peers(_reply("hsfei.adc")), ["hsfei.adc"])
+    def test_drops_a_reply_predating_the_flag(self):
+        # A libby old enough to omit is_daemon cannot prove it is one
+        self.assertEqual(self._peers(_reply("hsfei.adc")), [])
 
     def test_drops_a_failed_reply(self):
         self.assertEqual(
