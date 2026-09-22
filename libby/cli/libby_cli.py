@@ -361,7 +361,7 @@ def cmd_list(namespace: argparse.Namespace) -> int:
     # Parse before opening a transport so a malformed pattern stays an argument error
     address = parse_address_pattern(namespace.pattern)
     # A pattern that spans daemons is answered by broadcast, which always runs
-    # to its timeout, so it gets the shorter discovery default
+    # to its timeout, so it gets the shorter broadcast default
     one_daemon = address.keyword is not None and not address.spans_peers
     default_timeout = DEFAULT_TIMEOUT_S if one_daemon else DEFAULT_BROADCAST_TIMEOUT_S
     timeout = namespace.timeout if namespace.timeout is not None else default_timeout
@@ -595,7 +595,7 @@ def _connection_key(namespace: argparse.Namespace, config: Dict[str, Any]) -> st
     return f"zmq {sorted(resolve_address_book(config, namespace.addr).items())}"
 
 
-def _discover_listings(namespace: argparse.Namespace) -> Listings:
+def _fetch_listings(namespace: argparse.Namespace) -> Listings:
     config = load_cli_config(namespace.config)
 
     def fetch(timeout_s: float) -> Listings:
@@ -612,7 +612,7 @@ def _discover_listings(namespace: argparse.Namespace) -> Listings:
 def _complete_address(prefix: str, parsed_args: argparse.Namespace, **_: Any) -> List[str]:
     """Complete a partial <group>.<daemon>.<keyword> argument."""
     try:
-        return address_candidates(prefix, _discover_listings(parsed_args))
+        return address_candidates(prefix, _fetch_listings(parsed_args))
     except Exception:  # pylint: disable=broad-exception-caught
         # A completer must never break the shell; an unreachable broker completes nothing
         return []
@@ -621,7 +621,7 @@ def _complete_address(prefix: str, parsed_args: argparse.Namespace, **_: Any) ->
 def _complete_peer(prefix: str, parsed_args: argparse.Namespace, **_: Any) -> List[str]:
     """Complete a partial <group>.<daemon> argument."""
     try:
-        return peer_candidates(prefix, _discover_listings(parsed_args))
+        return peer_candidates(prefix, _fetch_listings(parsed_args))
     except Exception:  # pylint: disable=broad-exception-caught
         return []
 

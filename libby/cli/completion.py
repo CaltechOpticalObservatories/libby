@@ -1,4 +1,8 @@
-"""Shell completion for libby addresses, fed by one cached broadcast ``keys.list``."""
+"""Shell completion for libby addresses, fed by one cached broadcast ``keys.list``.
+
+The listing comes from the same broadcast ``libby list`` uses, not from
+bamboo's hello/discovery, which never reports who is alive.
+"""
 from __future__ import annotations
 
 import json
@@ -17,7 +21,7 @@ ListingsSource = Callable[[float], Listings]
 
 @dataclass(frozen=True)
 class CompletionCache:
-    """Last discovery result on disk, so a burst of TABs costs one broadcast."""
+    """Last peer listing on disk, so a burst of TABs costs one broadcast."""
 
     path: Path = DEFAULT_CACHE_PATH
     ttl_s: float = CACHE_TTL_S

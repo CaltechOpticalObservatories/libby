@@ -98,11 +98,11 @@ completion for verbs, flags and addresses. Add it to your shell rc:
 eval "$(libby completion bash)"
 ```
 
-Completing an address discovers live daemons the same way `list` does, so
-TAB offers daemons after `<group>.` and that daemon's keywords after
+Completing an address lists live daemons the same way `list` does, so TAB
+offers daemons after `<group>.` and that daemon's keywords after
 `<group>.<daemon>.`. Results are cached for 10s in
 `~/.libby/completion_cache.json` so a burst of TABs costs one broadcast, and
-discovery is bounded at 0.5s so TAB never hangs. An unreachable broker
+the lookup is bounded at 0.5s so TAB never hangs. An unreachable broker
 completes nothing rather than erroring.
 
 ## Modify syntax
