@@ -8,6 +8,7 @@ from libby.cli.completion import (
     CompletionCache,
     address_candidates,
     cached_listings,
+    list_candidates,
     peer_candidates,
 )
 
@@ -40,6 +41,36 @@ class AddressCandidatesTests(unittest.TestCase):
 
     def test_unknown_daemon_offers_nothing(self):
         self.assertEqual(address_candidates("hsfei.nosuch.", LISTINGS), [])
+
+
+class ListCandidatesTests(unittest.TestCase):
+    """Completing a list pattern, where a daemon may stand alone."""
+
+    def test_empty_prefix_offers_wildcards_and_bare_peers(self):
+        self.assertEqual(list_candidates("", LISTINGS),
+                         ["%.%", "hscal.%", "hscal.hkettherm",
+                          "hsfei.%", "hsfei.adc", "hsfei.atcfw"])
+
+    def test_candidates_never_fail_to_match_the_prefix(self):
+        # "%.%" must not be offered once a literal group is typed
+        for candidate in list_candidates("hs", LISTINGS):
+            self.assertTrue(candidate.startswith("hs"), candidate)
+
+    def test_group_prefix_offers_its_wildcard_and_daemons(self):
+        self.assertEqual(list_candidates("hsfei.", LISTINGS),
+                         ["hsfei.%", "hsfei.adc", "hsfei.atcfw"])
+
+    def test_daemon_prefix_offers_its_keywords_and_wildcard(self):
+        self.assertEqual(list_candidates("hsfei.adc.", LISTINGS),
+                         ["hsfei.adc.%", "hsfei.adc.isconnected", "hsfei.adc.position"])
+
+    def test_wildcard_daemon_spans_the_group(self):
+        self.assertEqual(list_candidates("hsfei.%.", LISTINGS),
+                         ["hsfei.%.%", "hsfei.%.isconnected", "hsfei.%.position"])
+
+    def test_partial_keyword_narrows_and_drops_the_wildcard(self):
+        self.assertEqual(list_candidates("hsfei.adc.is", LISTINGS),
+                         ["hsfei.adc.isconnected"])
 
 
 class PeerCandidatesTests(unittest.TestCase):
