@@ -1,6 +1,7 @@
 """Keyword-name parsing, value coercion, and peer/group naming (transport-agnostic)."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
 from .errors import KeywordNameError
@@ -27,6 +28,40 @@ def parse_keyword(arg: str, *, allow_pattern: bool = False) -> Tuple[str, str, s
             f"this verb requires an exact keyword (no %): {arg}"
         )
     return group, daemon, keyword
+
+
+@dataclass(frozen=True)
+class AddressPattern:
+    """A ``<group>.<daemon>[.<keyword>]`` pattern with ``%`` allowed in every segment."""
+
+    group: str
+    daemon: str
+    keyword: Optional[str]
+
+    @property
+    def spans_peers(self) -> bool:
+        """Return True when the group or daemon segment holds a wildcard."""
+        return "%" in self.group or "%" in self.daemon
+
+    @property
+    def peer_pattern(self) -> str:
+        """Return the pattern to match wire ids against, lowercased like the ids."""
+        return f"{self.group}.{self.daemon}".lower()
+
+
+def parse_address_pattern(arg: str) -> AddressPattern:
+    """Parse ``<group>.<daemon>[.<keyword>]`` with ``%`` allowed anywhere.
+
+    Unlike :func:`parse_keyword` this admits patterns that span daemons, so it
+    is only for callers that resolve them by broadcast (``list``, ``peers``).
+    """
+    parts = arg.split(".", 2)
+    if len(parts) < 2 or not all(parts):
+        raise KeywordNameError(
+            f"pattern must be <group>.<daemon>[.<keyword>], got: {arg}"
+        )
+    keyword = parts[2] if len(parts) == 3 else None
+    return AddressPattern(parts[0], parts[1], keyword)
 
 
 def qualified_peer_id(peer_id: str, group_id: Optional[str] = None) -> str:

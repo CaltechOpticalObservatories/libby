@@ -32,6 +32,29 @@ See the [installation guide](docs/source/installation.md) for full setup
 details, and the docs site above for everything else (keywords, the client
 library, the CLI, and writing a `LibbyDaemon` peer).
 
+## Finding peers
+
+`libby list <group>.<daemon>` (and `Client.peers`) is how you find out which
+peers are up. It broadcasts a `keys.list` that every peer answers, so it works
+the same on both transports and needs nothing configured beyond the transport
+itself.
+
+Discovery, in the sense of a peer table you can ask who is alive, is not
+implemented. It may be one day; until then use the broadcast above rather than
+these:
+
+- `Libby.peers_alive()` returns `{}` and `Libby.wait_for_peer()` always fails,
+  on either transport, because `Protocol` never instantiates a `PeerTable`.
+- ZMQ runs bamboo's hello, but only toward peers already in the sender's
+  address book, and nothing consumes it for liveness. A client learns nothing
+  about a daemon that has not been told about the client, so
+  `Libby.knows_key()` stays False in the usual one-sided setup.
+- `Libby.rabbitmq()` does not start hello at all. The broker routes messages;
+  it does not tell a peer who else is connected.
+
+`LibbyDaemon`'s `discovery_enabled` / `on_hello` control bamboo's hello, not
+the broadcast above.
+
 ## Testing
 
 ```bash

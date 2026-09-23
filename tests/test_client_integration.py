@@ -14,15 +14,18 @@ from __future__ import annotations
 import socket
 import threading
 import unittest
-from typing import Tuple
+from typing import List, Optional, Tuple, Type
 
 from libby import Client, KeywordError
+from libby.client import DEFAULT_SELF_ID
 from libby.daemon import LibbyDaemon
 from libby.rabbitmq_transport import RabbitMQTransport
 
 RABBITMQ_URL = "amqp://localhost"
 GROUP_ID = "hsfei"
+OTHER_GROUP_ID = "hscal"
 RPC_TIMEOUT_S = 6.0
+LISTING_TIMEOUT_S = 2.0
 SERVE_STOP_TIMEOUT_S = 10.0
 INITIAL_POSITION = 10.0
 
@@ -102,6 +105,22 @@ class _ZmqLifecycleDaemon(_LifecycleDaemon):
 
     peer_id = "lifecycletestzmq"
     transport = "zmq"
+
+
+def _started_daemon(
+    daemon_cls: Type[_FixtureDaemon],
+    daemon_peer_id: str,
+    daemon_group_id: str,
+    bind: Optional[str] = None,
+) -> LibbyDaemon:
+    """Start one fixture daemon under its own peer and group id."""
+    daemon = daemon_cls()
+    daemon.peer_id = daemon_peer_id
+    daemon.group_id = daemon_group_id
+    if bind is not None:
+        daemon.bind = bind
+    daemon.start()
+    return daemon
 
 
 # Nested inside a plain class so unittest's loader, which collects every
@@ -206,6 +225,70 @@ class _Bases:  # pylint: disable=too-few-public-methods
             self.assertEqual(list(values), wanted)
             self.assertTrue(all(entry["ok"] for entry in values.values()))
 
+    class PeerListingCases(unittest.TestCase):
+        """Broadcast peer listing that must hold identically on every transport.
+
+        Concrete subclasses start two fixture daemons in ``GROUP_ID`` and one
+        in ``OTHER_GROUP_ID``, plus a plain ``Client`` whose ``self_id`` is
+        shaped like a peer in ``GROUP_ID``, and supply ``client`` plus the
+        qualified ids.
+        """
+
+        client: Client
+        group_peers: Tuple[str, str]
+        other_peer: str
+        impostor_peer: str
+
+        def test_peers_lists_every_daemon_in_the_group(self):
+            """Find the group's daemons by wildcard, and no other group's."""
+            found = self.client.peers(f"{GROUP_ID}.%", timeout_s=LISTING_TIMEOUT_S)
+            for peer in self.group_peers:
+                self.assertIn(peer, found)
+            self.assertNotIn(self.other_peer, found)
+
+        def test_peers_spans_groups_and_skips_the_client(self):
+            """Find every daemon with %.% without listing the asking client."""
+            found = self.client.peers("%.%", timeout_s=LISTING_TIMEOUT_S)
+            for peer in (*self.group_peers, self.other_peer):
+                self.assertIn(peer, found)
+            self.assertNotIn(DEFAULT_SELF_ID, found)
+
+        def test_peers_omits_a_client_that_answers_the_broadcast(self):
+            """Leave out a plain Client, which serves keys.list like a daemon does."""
+            found = self.client.peers(f"{GROUP_ID}.%", timeout_s=LISTING_TIMEOUT_S)
+            self.assertNotIn(self.impostor_peer, found)
+            self.assertIn(self.group_peers[0], found)
+
+        def test_peers_with_an_exact_id_confirms_one_daemon(self):
+            """Resolve an exact <group>.<daemon> to just that daemon."""
+            found = self.client.peers(self.group_peers[0], timeout_s=LISTING_TIMEOUT_S)
+            self.assertEqual(found, [self.group_peers[0]])
+
+        def test_list_across_daemons_returns_qualified_names(self):
+            """List one keyword on every daemon of a group as names that feed back in."""
+            names = self.client.list(f"{GROUP_ID}.%.positionvalue",
+                                     timeout_s=LISTING_TIMEOUT_S)
+            for peer in self.group_peers:
+                self.assertIn(f"{peer}.positionvalue", names)
+            self.assertNotIn(f"{self.other_peer}.positionvalue", names)
+            self.assertEqual(
+                self.client.get(f"{self.group_peers[0]}.positionvalue",
+                                timeout_s=RPC_TIMEOUT_S),
+                INITIAL_POSITION)
+
+        def test_list_across_daemons_with_no_match_is_empty(self):
+            """Return nothing, rather than raise, when no daemon has the keyword."""
+            self.assertEqual(
+                self.client.list(f"{GROUP_ID}.%.nosuchkeyword", timeout_s=LISTING_TIMEOUT_S),
+                [])
+
+        def test_peer_listings_carry_each_daemons_keywords(self):
+            """Map each daemon to its keyword names from the same broadcast."""
+            listings = self.client.peer_listings(f"{GROUP_ID}.%", timeout_s=LISTING_TIMEOUT_S)
+            for peer in self.group_peers:
+                self.assertIn("positionvalue", listings[peer])
+                self.assertIn("uptime", listings[peer])
+
     class LifecycleCases(unittest.TestCase):
         """Daemon startup and shutdown guarantees, per transport."""
 
@@ -281,6 +364,63 @@ class ZmqClientTests(_Bases.ClientCases):
     def tearDownClass(cls):
         cls.client.close()
         cls.daemon.stop()
+
+
+@unittest.skipUnless(_broker_available(), "no RabbitMQ broker reachable at amqp://localhost")
+class RabbitMQPeerListingTests(_Bases.PeerListingCases):
+    """Peer listing cases over RabbitMQ."""
+
+    daemons: List[LibbyDaemon]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.daemons = [
+            _started_daemon(_RabbitFixtureDaemon, "listingonermq", GROUP_ID),
+            _started_daemon(_RabbitFixtureDaemon, "listingtwormq", GROUP_ID),
+            _started_daemon(_RabbitFixtureDaemon, "listingotherrmq", OTHER_GROUP_ID),
+        ]
+        cls.group_peers = (f"{GROUP_ID}.listingonermq", f"{GROUP_ID}.listingtwormq")
+        cls.other_peer = f"{OTHER_GROUP_ID}.listingotherrmq"
+        cls.impostor_peer = f"{GROUP_ID}.impostorrmq"
+        cls.impostor = Client.rabbitmq(self_id=cls.impostor_peer, rabbitmq_url=RABBITMQ_URL)
+        cls.client = Client.rabbitmq(rabbitmq_url=RABBITMQ_URL)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.close()
+        cls.impostor.close()
+        for daemon in cls.daemons:
+            daemon.stop()
+
+
+class ZmqPeerListingTests(_Bases.PeerListingCases):
+    """Peer listing cases over ZMQ, where the address book is what gets asked."""
+
+    daemons: List[LibbyDaemon]
+
+    @classmethod
+    def setUpClass(cls):
+        groups = {"listingonezmq": GROUP_ID, "listingtwozmq": GROUP_ID,
+                  "listingotherzmq": OTHER_GROUP_ID}
+        address_book = {f"{group}.{name}": _free_endpoint() for name, group in groups.items()}
+        cls.daemons = [
+            _started_daemon(_ZmqFixtureDaemon, name, group, bind=address_book[f"{group}.{name}"])
+            for name, group in groups.items()
+        ]
+        cls.group_peers = (f"{GROUP_ID}.listingonezmq", f"{GROUP_ID}.listingtwozmq")
+        cls.other_peer = f"{OTHER_GROUP_ID}.listingotherzmq"
+        cls.impostor_peer = f"{GROUP_ID}.impostorzmq"
+        impostor_endpoint = _free_endpoint()
+        address_book[cls.impostor_peer] = impostor_endpoint
+        cls.impostor = Client.zmq(self_id=cls.impostor_peer, bind=impostor_endpoint)
+        cls.client = Client.zmq(bind=_free_endpoint(), address_book=address_book)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.close()
+        cls.impostor.close()
+        for daemon in cls.daemons:
+            daemon.stop()
 
 
 @unittest.skipUnless(_broker_available(), "no RabbitMQ broker reachable at amqp://localhost")

@@ -1,7 +1,11 @@
 from __future__ import annotations
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional
+import queue
 import time
 
+from bamboo.builder import MessageBuilder
 from bamboo.keys import KeyRegistry
 from bamboo.protocol import Protocol
 from bamboo.discovery import Discovery
@@ -9,6 +13,17 @@ from bamboo.discovery import Discovery
 from .keyword import Keyword, match_pattern
 from .keyword_registry import KeywordRegistry
 from .naming import qualified_peer_id
+
+DEFAULT_BROADCAST_TIMEOUT_S = 1.0
+
+
+@dataclass(frozen=True)
+class BroadcastReply:
+    """One peer's answer to :meth:`Libby.broadcast_request`."""
+
+    peer_id: str
+    payload: Dict[str, Any]
+
 
 class Libby:
     def __init__(
@@ -21,9 +36,13 @@ class Libby:
         discover: bool = False,
         discover_interval_s: float = 5.0,
         hello_on_start: bool = True,
+        is_daemon: bool = False,
     ):
         self.self_id = self_id
         self.transport = transport
+        # Every Libby answers keys.list, so a broadcast reaches clients too.
+        # Only LibbyDaemon sets this, and only these are listed as peers
+        self.is_daemon = is_daemon
         self.keys = KeyRegistry()
         self.proto = Protocol(transport=self.transport, self_id=self_id, keys=self.keys)
 
@@ -65,6 +84,7 @@ class Libby:
         discover_interval_s: float = 5.0,
         hello_on_start: bool = True,
         group_id: Optional[str] = None,
+        is_daemon: bool = False,
     ) -> "Libby":
         try:
             from .zmq_transport import ZmqTransport
@@ -86,6 +106,7 @@ class Libby:
             discover=discover,
             discover_interval_s=discover_interval_s,
             hello_on_start=hello_on_start,
+            is_daemon=is_daemon,
         )
 
     @classmethod
@@ -96,6 +117,8 @@ class Libby:
         keys: Optional[List[str]] = None,
         callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
         group_id: Optional[str] = None,
+        *,
+        is_daemon: bool = False,
     ) -> "Libby":
         """
         Create a Libby instance using RabbitMQ transport.
@@ -139,6 +162,7 @@ class Libby:
             discover=False,
             discover_interval_s=0,
             hello_on_start=False,
+            is_daemon=is_daemon,
         )
 
     # lifecycle
@@ -166,6 +190,48 @@ class Libby:
 
     def rpc(self, peer_id: str, key: str, payload: Dict[str, Any], ttl_ms: int = 8000):
         return self.request(peer_id, key, payload, ttl_ms)
+
+    def broadcast_request(
+        self,
+        key: str,
+        payload: Dict[str, Any],
+        timeout_s: float = DEFAULT_BROADCAST_TIMEOUT_S,
+    ) -> List[BroadcastReply]:
+        """Send ``key`` to every reachable peer and collect their replies.
+
+        Nothing on the wire says how many peers will answer, so this always
+        waits the full ``timeout_s``. Over ZMQ "every reachable peer" is the
+        address book. Our own reply is dropped: on RabbitMQ our queue sits on
+        the fanout exchange like everyone else's.
+        """
+        msg = MessageBuilder(sourceid=self.self_id).req(key, payload).to(None).build()
+        with self._reply_queue(msg.env.transid) as replies:
+            self.proto.send(msg)
+            return list(self._drain_replies(replies, timeout_s))
+
+    @contextmanager
+    def _reply_queue(self, transid: str) -> Iterator["queue.Queue[Any]"]:
+        # bamboo only registers a reply queue for direct requests, so a broadcast needs its own
+        lock, waiters = self.proto._lock, self.proto._resp_wait  # pylint: disable=protected-access
+        replies: "queue.Queue[Any]" = queue.Queue()
+        with lock:
+            waiters[transid] = replies
+        try:
+            yield replies
+        finally:
+            with lock:
+                waiters.pop(transid, None)
+
+    def _drain_replies(self, replies: "queue.Queue[Any]",
+                       timeout_s: float) -> Iterator[BroadcastReply]:
+        deadline = time.monotonic() + timeout_s
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                resp = replies.get(timeout=remaining)
+            except queue.Empty:
+                return
+            if resp.env.sourceid != self.self_id:
+                yield BroadcastReply(resp.env.sourceid, dict(resp.env.payload or {}))
 
     def serve_keys(self, keys: List[str], callback: Callable[[dict, dict], Optional[dict]]) -> None:
         for k in keys:
@@ -203,6 +269,7 @@ class Libby:
             "ok": True,
             "matches": match_pattern(pattern, self._keywords),
             "services": self._served_services(),
+            "is_daemon": self.is_daemon,
         }
 
     def _served_services(self) -> List[str]:

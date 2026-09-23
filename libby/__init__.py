@@ -1,7 +1,7 @@
 from bamboo.protocol import Protocol
 from bamboo.builder import MessageBuilder
 from bamboo.keys import KeyRegistry
-from .libby import Libby
+from .libby import BroadcastReply, Libby
 from .keyword import (
     Keyword,
     BoolKeyword,
@@ -25,6 +25,7 @@ from .errors import (
 
 __all__ = [
     "Libby",
+    "BroadcastReply",
     "Client",
     "KeyListing",
     "WaitResult",

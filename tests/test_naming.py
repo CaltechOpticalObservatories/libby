@@ -2,7 +2,13 @@
 import unittest
 
 from libby.errors import KeywordNameError
-from libby.naming import coerce_value, parse_keyword, peer_id, qualified_peer_id
+from libby.naming import (
+    coerce_value,
+    parse_address_pattern,
+    parse_keyword,
+    peer_id,
+    qualified_peer_id,
+)
 
 
 class ParseKeywordTests(unittest.TestCase):
@@ -33,6 +39,28 @@ class ParseKeywordTests(unittest.TestCase):
             parse_keyword("hsfei.pickoff.is%", allow_pattern=True),
             ("hsfei", "pickoff", "is%"),
         )
+
+
+class ParseAddressPatternTests(unittest.TestCase):
+    def test_two_segments_mean_no_keyword(self):
+        address = parse_address_pattern("hsfei.%")
+        self.assertEqual((address.group, address.daemon, address.keyword), ("hsfei", "%", None))
+
+    def test_wildcard_daemon_spans_peers(self):
+        address = parse_address_pattern("HSFEI.%.is%")
+        self.assertTrue(address.spans_peers)
+        self.assertEqual(address.keyword, "is%")
+        # Wire ids are lowercased, so the pattern matched against them is too
+        self.assertEqual(address.peer_pattern, "hsfei.%")
+
+    def test_exact_daemon_does_not_span_peers(self):
+        self.assertFalse(parse_address_pattern("hsfei.pickoff.is%").spans_peers)
+
+    def test_rejects_one_segment_and_empty_segments(self):
+        with self.assertRaises(KeywordNameError):
+            parse_address_pattern("hsfei")
+        with self.assertRaises(KeywordNameError):
+            parse_address_pattern("hsfei..positionvalue")
 
 
 class PeerIdTests(unittest.TestCase):

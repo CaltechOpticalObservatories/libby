@@ -361,6 +361,7 @@ class LibbyDaemon:
                 keys=[],
                 callback=None,
                 group_id=self.config_group_id(),
+                is_daemon=True,
             )
 
         if transport == "zmq":
@@ -374,6 +375,7 @@ class LibbyDaemon:
                 discover_interval_s=self.config_discovery_interval_s(),
                 hello_on_start=True,
                 group_id=self.config_group_id(),
+                is_daemon=True,
             )
 
         raise ValueError(

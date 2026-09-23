@@ -5,9 +5,11 @@
 ```
 libby show     <group>.<daemon>.<keyword>         # read a keyword (% wildcard in keyword)
 libby modify   <group>.<daemon>.<keyword>=V       # write a keyword (exact keyword)
-libby list     <group>.<daemon>.<pattern>         # list keyword names (% wildcard in keyword)
+libby list     <group>.<daemon>.<pattern>         # list keyword names (% wildcard in any segment)
+libby list     <group>.<daemon>                   # list live daemons (% wildcard in any segment)
 libby describe <group>.<daemon>.<keyword>         # metadata for one keyword (exact keyword)
 libby waitfor  '$<group>.<daemon>.<keyword> > V'  # block until a comparison holds
+libby completion bash|zsh                         # print shell code for TAB completion
 ```
 
 `<group>.<daemon>` is the address of one daemon: `group` is its `group_id`
@@ -16,8 +18,8 @@ daemon's config is addressed as `hsfei.adc`). `Libby.rabbitmq()` /
 `Libby.zmq()` build the actual wire identity from those two fields via
 `libby.naming.qualified_peer_id`, so a daemon config never needs to
 concatenate them by hand. `group`/`daemon` are case-insensitive (`HSFEI.ADC`
-and `hsfei.adc` reach the same daemon); the keyword isn't. Cross-peer
-fanout is not supported. `req` and `sub` are kept for raw RPC / topic
+and `hsfei.adc` reach the same daemon); the keyword isn't. `list` is the one
+verb that spans daemons; `req` and `sub` are kept for raw RPC / topic
 debugging.
 
 ## Examples
@@ -51,6 +53,16 @@ $ libby list hsfei.pickoff.%min
 hsfei.pickoff.hardmin
 hsfei.pickoff.softmin
 
+$ libby list hsfei.%            # which daemons are up?
+hsfei.adc
+hsfei.atcpress
+hsfei.pickoff
+
+$ libby list %.%.isconnected    # one keyword across the whole fleet
+hscal.hkettherm.isconnected
+hsfei.adc.isconnected
+hsfei.atcpress.isconnected
+
 $ libby waitfor '$hsfei.pickoff.ismoving == false' --timeout 30
 hsfei.pickoff.ismoving = False (satisfied after 4.2s)
 
@@ -61,6 +73,41 @@ libby: $hsfei.pickoff.positionvalue > 15: still false after 5.0s; hsfei.pickoff.
 Add `--json` to any verb for machine-readable output (objects for `show` /
 `modify` / `describe`, list of objects for `show <pattern>`, list of strings
 for `list`).
+
+## Listing across daemons
+
+A `%` in the `<group>` or `<daemon>` segment of `list` asks every reachable
+daemon at once, rather than one named daemon. Drop the keyword segment
+(`libby list hsfei.%`) to list the daemons themselves; keep it
+(`libby list hsfei.%.is%`) to list matching keywords on each of them.
+
+Nothing on the wire says how many daemons exist, so these always run for the
+full timeout (default 1s, `--timeout` to change it) instead of returning on
+the first answer. A daemon that is down simply doesn't appear. Exit code 3
+means nothing answered.
+
+Only daemons are listed. Every libby connection answers `keys.list`, so other
+clients reply to the broadcast too, and they identify themselves as clients
+and are left out.
+
+Over ZMQ the broadcast only reaches daemons in the address book (`peers:` in
+`cli_config.yaml`, or `--addr`); over RabbitMQ the broker reaches everyone.
+
+## Completion
+
+`libby completion bash` (or `zsh`) prints shell code that wires TAB
+completion for verbs, flags and addresses. Add it to your shell rc:
+
+```bash
+eval "$(libby completion bash)"
+```
+
+Completing an address lists live daemons the same way `list` does, so TAB
+offers daemons after `<group>.` and that daemon's keywords after
+`<group>.<daemon>.`. Results are cached for 10s in
+`~/.libby/completion_cache.json` so a burst of TABs costs one broadcast, and
+the lookup is bounded at 0.5s so TAB never hangs. An unreachable broker
+completes nothing rather than erroring.
 
 ## Modify syntax
 
