@@ -104,10 +104,16 @@ eval "$(libby completion bash)"
 
 Completing an address lists live daemons the same way `list` does, so TAB
 offers daemons after `<group>.` and that daemon's keywords after
-`<group>.<daemon>.`. Results are cached for 10s in
-`~/.libby/completion_cache.json` so a burst of TABs costs one broadcast, and
-the lookup is bounded at 0.5s so TAB never hangs. An unreachable broker
-completes nothing rather than erroring.
+`<group>.<daemon>.`. `list` completes its own shape: a daemon can stand on
+its own there, and every level also offers its `%` form, so
+`libby list <TAB>` starts at `%.%` and `hsfei.%`.
+
+Flags are not offered until you type `-`, so TAB on an empty argument shows
+verbs or addresses rather than burying them in `--options`.
+
+Results are cached for 10s in `~/.libby/completion_cache.json` so a burst of
+TABs costs one broadcast, and the lookup is bounded at 0.5s so TAB never
+hangs. An unreachable broker completes nothing rather than erroring.
 
 ## Modify syntax
 

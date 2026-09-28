@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
+from libby.keyword import match_pattern
+
 DEFAULT_CACHE_PATH = Path.home() / ".libby" / "completion_cache.json"
 CACHE_TTL_S = 10.0
 COMPLETE_TIMEOUT_S = 0.5
@@ -65,12 +67,20 @@ def peer_candidates(prefix: str, listings: Listings) -> List[str]:
     return sorted(peer for peer in listings if peer.startswith(prefix.lower()))
 
 
+def _peer_lowered(prefix: str) -> str:
+    """Lowercase the group and daemon segments, which are case-insensitive."""
+    group, dot, rest = prefix.partition(".")
+    daemon, dot2, keyword = rest.partition(".")
+    return f"{group.lower()}{dot}{daemon.lower()}{dot2}{keyword}"
+
+
 def address_candidates(prefix: str, listings: Listings) -> List[str]:
     """Complete a partial ``<group>.<daemon>.<keyword>``.
 
     Until the daemon segment is complete the candidates end in ``.``, so the
     shell stops there and the next TAB moves on to the keywords.
     """
+    prefix = _peer_lowered(prefix)
     if prefix.count(".") < 2:
         peers = peer_candidates(prefix, listings)
         # The shell appends a space to a lone candidate unless it ends in
@@ -79,9 +89,29 @@ def address_candidates(prefix: str, listings: Listings) -> List[str]:
             return [f"{peer}." for peer in peers]
         prefix = f"{peers[0]}."
     peer, _, keyword_prefix = prefix.rpartition(".")
-    peer = peer.lower()
     return sorted(
         f"{peer}.{name}"
         for name in listings.get(peer, [])
         if name.startswith(keyword_prefix)
     )
+
+
+def list_candidates(prefix: str, listings: Listings) -> List[str]:
+    """Complete a ``libby list`` pattern.
+
+    Unlike an address, the daemon segment may stand alone and any segment may
+    be ``%``, so each level offers its wildcard next to the concrete names.
+    """
+    prefix = _peer_lowered(prefix)
+    if prefix.count(".") < 2:
+        peers = peer_candidates(prefix, listings)
+        groups = sorted({peer.split(".", 1)[0] for peer in peers})
+        candidates = ["%.%", *(f"{group}.%" for group in groups), *peers]
+    else:
+        peer_pattern, _, _ = prefix.rpartition(".")
+        candidates = [f"{peer_pattern}.%"] + [
+            f"{peer_pattern}.{name}"
+            for peer in match_pattern(peer_pattern, listings)
+            for name in listings[peer]
+        ]
+    return sorted({c for c in candidates if c.startswith(prefix)})

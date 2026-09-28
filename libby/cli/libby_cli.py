@@ -22,6 +22,7 @@ from libby.cli.completion import (
     Listings,
     address_candidates,
     cached_listings,
+    list_candidates,
     peer_candidates,
 )
 from libby.config_resolve import (
@@ -626,6 +627,14 @@ def _complete_peer(prefix: str, parsed_args: argparse.Namespace, **_: Any) -> Li
         return []
 
 
+def _complete_list(prefix: str, parsed_args: argparse.Namespace, **_: Any) -> List[str]:
+    """Complete a partial list pattern, which may name daemons or keywords."""
+    try:
+        return list_candidates(prefix, _fetch_listings(parsed_args))
+    except Exception:  # pylint: disable=broad-exception-caught
+        return []
+
+
 def _completed_by(
     action: argparse.Action,
     completer: Callable[..., List[str]] = _complete_address,
@@ -700,7 +709,7 @@ def build_parser() -> argparse.ArgumentParser:
         "pattern",
         help="<group>.<daemon>[.<keyword-pattern>] (%% wildcard in any segment; "
              "without a keyword segment, list the matching daemons)",
-    ))
+    ), _complete_list)
     p_list.set_defaults(func=cmd_list)
 
     p_describe = sub.add_parser("describe", help="Show metadata for a keyword")
@@ -766,7 +775,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = build_parser()
-    argcomplete.autocomplete(parser)
+    # Without this every TAB also lists --flags, burying the addresses
+    argcomplete.autocomplete(parser, always_complete_options=False)
     namespace = parser.parse_args(argv)
 
     try:
