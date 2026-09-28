@@ -67,12 +67,20 @@ def peer_candidates(prefix: str, listings: Listings) -> List[str]:
     return sorted(peer for peer in listings if peer.startswith(prefix.lower()))
 
 
+def _peer_lowered(prefix: str) -> str:
+    """Lowercase the group and daemon segments, which are case-insensitive."""
+    group, dot, rest = prefix.partition(".")
+    daemon, dot2, keyword = rest.partition(".")
+    return f"{group.lower()}{dot}{daemon.lower()}{dot2}{keyword}"
+
+
 def address_candidates(prefix: str, listings: Listings) -> List[str]:
     """Complete a partial ``<group>.<daemon>.<keyword>``.
 
     Until the daemon segment is complete the candidates end in ``.``, so the
     shell stops there and the next TAB moves on to the keywords.
     """
+    prefix = _peer_lowered(prefix)
     if prefix.count(".") < 2:
         peers = peer_candidates(prefix, listings)
         # The shell appends a space to a lone candidate unless it ends in
@@ -81,19 +89,11 @@ def address_candidates(prefix: str, listings: Listings) -> List[str]:
             return [f"{peer}." for peer in peers]
         prefix = f"{peers[0]}."
     peer, _, keyword_prefix = prefix.rpartition(".")
-    peer = peer.lower()
     return sorted(
         f"{peer}.{name}"
         for name in listings.get(peer, [])
         if name.startswith(keyword_prefix)
     )
-
-
-def _peer_lowered(prefix: str) -> str:
-    """Lowercase the group and daemon segments, which are case-insensitive."""
-    group, dot, rest = prefix.partition(".")
-    daemon, dot2, keyword = rest.partition(".")
-    return f"{group.lower()}{dot}{daemon.lower()}{dot2}{keyword}"
 
 
 def list_candidates(prefix: str, listings: Listings) -> List[str]:
