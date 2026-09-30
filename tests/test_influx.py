@@ -272,6 +272,7 @@ class InfluxSourceReadTests(unittest.TestCase):
         self.assertIn('from(bucket: "telemetry")', query)
         self.assertIn('r._measurement == "positionvalue"', query)
         self.assertIn('r._field == "value"', query)
+        self.assertNotIn("r.group", query)
         self.assertNotIn("r.peer", query)
 
     def test_open_ended_range_has_no_stop(self):
@@ -288,6 +289,17 @@ class InfluxSourceReadTests(unittest.TestCase):
         """Filter on peer, quoting it so it cannot alter the query."""
         query = self._query(peer='adc" or true')
         self.assertIn('r.peer == "adc\\" or true"', query)
+
+    def test_group_filter_is_escaped(self):
+        """Filter on group, quoting it so it cannot alter the query."""
+        query = self._query(group='hsfei" or true')
+        self.assertIn('r.group == "hsfei\\" or true"', query)
+        self.assertNotIn("r.peer", query)
+
+    def test_group_and_peer_filter_together(self):
+        """Narrow to one daemon when its name is reused across groups."""
+        query = self._query(group="hsfei", peer="adc")
+        self.assertIn('r.group == "hsfei" and r.peer == "adc"', query)
 
     def test_records_across_tables_come_back_oldest_first(self):
         """Merge every table's records, sorted by time."""

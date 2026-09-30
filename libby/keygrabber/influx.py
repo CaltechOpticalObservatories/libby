@@ -184,12 +184,13 @@ class InfluxSource:
         keyword: str,
         start: datetime,
         stop: Optional[datetime] = None,
+        group: Optional[str] = None,
         peer: Optional[str] = None,
     ) -> List[Sample]:
         """Return one keyword's samples in ``[start, stop)``, oldest first."""
         if self._query_api is None:
             raise SourceReadError("influx source is not connected")
-        query = self._build_query(keyword, start, stop, peer)
+        query = self._build_query(keyword, start, stop, group, peer)
         try:
             tables = self._query_api.query(query, org=self._config.org)
         # The client surfaces API, HTTP and socket errors with no common base,
@@ -213,6 +214,7 @@ class InfluxSource:
         keyword: str,
         start: datetime,
         stop: Optional[datetime],
+        group: Optional[str],
         peer: Optional[str],
     ) -> str:
         time_range = f"start: {flux_time(start)}"
@@ -220,6 +222,8 @@ class InfluxSource:
             time_range += f", stop: {flux_time(stop)}"
         predicate = (f"r._measurement == {flux_string(keyword)}"
                      ' and r._field == "value"')
+        if group is not None:
+            predicate += f" and r.group == {flux_string(group)}"
         if peer is not None:
             predicate += f" and r.peer == {flux_string(peer)}"
         return (f"from(bucket: {flux_string(self._config.bucket)})\n"

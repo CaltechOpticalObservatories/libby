@@ -41,9 +41,14 @@ class Source(Protocol):
         keyword: str,
         start: datetime,
         stop: Optional[datetime] = None,
+        group: Optional[str] = None,
         peer: Optional[str] = None,
     ) -> List[Sample]:
-        """Return one keyword's samples in ``[start, stop)``, oldest first."""
+        """Return one keyword's samples in ``[start, stop)``, oldest first.
+
+        ``group`` and ``peer`` each narrow the result when given. A peer name
+        alone can match daemons in several groups, so pass both to select one.
+        """
 
     def close(self) -> None:
         """Release the connection."""
