@@ -17,7 +17,8 @@ from influxdb_client import InfluxDBClient, Point, WritePrecision
 from influxdb_client.client.flux_table import FluxRecord
 from influxdb_client.client.write_api import SYNCHRONOUS
 
-from .sink import Sample, SinkError, SinkWriteError, Value
+from ..keyheader.source import SourceReadError
+from .sink import Sample, SinkWriteError, Value
 
 # Influx drops an empty tag value, which would split one keyword into two
 # series depending on whether it declared units. A literal keeps every point
@@ -187,13 +188,14 @@ class InfluxSource:
     ) -> List[Sample]:
         """Return one keyword's samples in ``[start, stop)``, oldest first."""
         if self._query_api is None:
-            raise SinkError("influx source is not connected")
+            raise SourceReadError("influx source is not connected")
         query = self._build_query(keyword, start, stop, peer)
         try:
             tables = self._query_api.query(query, org=self._config.org)
-        # The client surfaces API, HTTP and socket errors with no common base
+        # The client surfaces API, HTTP and socket errors with no common base,
+        # and the caller's contract is a single retryable error
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            raise SinkError(f"influx query failed: {exc}") from exc
+            raise SourceReadError(f"influx query failed: {exc}") from exc
         samples = [to_sample(record) for table in tables
                    for record in table.records]
         samples.sort(key=lambda sample: sample.timestamp)

@@ -10,7 +10,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from typing import Any, List, Optional
 
-from libby.keygrabber import Sample, SinkError, SinkWriteError
+from libby.keygrabber import Sample, SinkWriteError
+from libby.keyheader.source import SourceReadError
 
 HAS_INFLUX = importlib.util.find_spec("influxdb_client") is not None
 
@@ -304,15 +305,15 @@ class InfluxSourceReadTests(unittest.TestCase):
         self.source._query_api = _FakeQueryApi()
         self.assertEqual(self.source.read("positionvalue", self.START), [])
 
-    def test_backend_failure_becomes_a_sink_error(self):
-        """Translate the client's own exceptions into one error type."""
+    def test_backend_failure_becomes_a_source_read_error(self):
+        """Translate the client's own exceptions into one retryable error."""
         self.source._query_api = _FakeQueryApi(error=OSError("refused"))
-        with self.assertRaises(SinkError):
+        with self.assertRaises(SourceReadError):
             self.source.read("positionvalue", self.START)
 
-    def test_reading_before_connect_is_a_sink_error(self):
+    def test_reading_before_connect_is_a_source_read_error(self):
         """Fail a read on an unconnected source rather than on None."""
-        with self.assertRaises(SinkError):
+        with self.assertRaises(SourceReadError):
             self.source.read("positionvalue", self.START)
 
     def test_is_connected_is_false_before_connect(self):
