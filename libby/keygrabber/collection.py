@@ -28,6 +28,7 @@ class TickResult:
 
     samples: Tuple[Sample, ...]
     read_errors: int
+    first_error: Optional[str] = None
 
 
 # Config plus the runtime state the control keywords expose; each attribute is
@@ -134,12 +135,16 @@ class Collection:  # pylint: disable=too-many-instance-attributes
 
         samples: List[Sample] = []
         read_errors = 0
+        first_error: Optional[str] = None
         for qualified_name, response in responses.items():
             if not response.get("ok"):
                 read_errors += 1
+                if first_error is None:
+                    first_error = (f"{qualified_name}: "
+                                   f"{response.get('error', 'no error given')}")
                 continue
             samples.append(self._sample(qualified_name, response, timestamp))
-        return TickResult(tuple(samples), read_errors)
+        return TickResult(tuple(samples), read_errors, first_error)
 
     def _read_individually(
         self,

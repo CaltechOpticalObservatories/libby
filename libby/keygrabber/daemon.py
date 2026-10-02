@@ -373,7 +373,10 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
                 collection.last_sample = datetime.now(timezone.utc)
                 self._note_success(collection)
             elif collection.keyword_count:
-                self._note_failure(collection, "every read failed")
+                self._note_failure(
+                    collection,
+                    f"every read failed ({result.read_errors} errors), "
+                    f"first: {result.first_error}")
         except LibbyError as exc:
             self.counters.add(read_errors=1)
             self._note_failure(collection, str(exc))
