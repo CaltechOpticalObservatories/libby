@@ -161,6 +161,21 @@ class TickTests(unittest.TestCase):
         self.assertEqual(result.read_errors, 1)
         self.assertEqual([s.keyword for s in result.samples], ["isconnected"])
 
+    def test_first_failed_read_is_reported(self):
+        """Keep the first error's message, so a failed tick can say why."""
+        client = _FakeClient(values={
+            "positionvalue": {"ok": False, "error": "hardware unreachable"},
+            "isconnected": {"ok": False, "error": "timed out"},
+        })
+        result = self._ticked(client)
+        self.assertEqual(result.read_errors, 2)
+        self.assertEqual(result.first_error,
+                         "hsfei.adc.isconnected: timed out")
+
+    def test_clean_tick_reports_no_error(self):
+        """Leave first_error unset when every read succeeded."""
+        self.assertIsNone(self._ticked(_FakeClient()).first_error)
+
     def test_null_value_is_kept_as_a_sample(self):
         """Leave a null for the sink to judge, so a backend may store it."""
         client = _FakeClient(values={
