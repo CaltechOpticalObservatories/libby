@@ -61,6 +61,9 @@ class _FixtureDaemon(LibbyDaemon):
             units="mm",
         )
         self.keyword_registry.bool("isreferenced", getter=lambda: True)
+        # Setter-only, like a gauge's unit selector: listed, but showing it
+        # yields an error rather than a value
+        self.keyword_registry.int("mode", setter=lambda v: state.update(mode=v))
 
 
 class _LifecycleDaemon(LibbyDaemon):
@@ -192,6 +195,18 @@ class _Bases:  # pylint: disable=too-few-public-methods
             listing = self.client.listing(self._name("%"), timeout_s=RPC_TIMEOUT_S)
             self.assertIn("keys.read", listing.services)
             self.assertIn(self._name("positionvalue"), listing.names)
+
+        def test_listing_names_the_keywords_that_cannot_be_read(self):
+            """A setter-only keyword is listed, and flagged as unreadable.
+
+            It stays in names so `libby list` still shows it; a caller polling
+            the peer uses writeonly to skip it rather than reading an error
+            every tick.
+            """
+            listing = self.client.listing(self._name("%"), timeout_s=RPC_TIMEOUT_S)
+            self.assertIn(self._name("mode"), listing.names)
+            self.assertEqual(listing.writeonly, ("mode",))
+            self.assertNotIn("positionvalue", listing.writeonly)
 
         def test_describe_reports_type_and_units(self):
             """Read one keyword's metadata."""
