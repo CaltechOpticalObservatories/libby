@@ -265,9 +265,15 @@ class Libby:
         pattern = payload.get("pattern", "%")
         if not isinstance(pattern, str):
             return {"ok": False, "error": "pattern must be a string"}
+        matches = match_pattern(pattern, self._keywords)
         return {
             "ok": True,
-            "matches": match_pattern(pattern, self._keywords),
+            "matches": matches,
+            # Which of those have no value to read, so a caller polling a peer
+            # does not ask for them. A trigger answers a show with `false`,
+            # which would otherwise be archived as data.
+            "writeonly": [name for name in matches
+                          if self._keywords[name].writeonly],
             "services": self._served_services(),
             "is_daemon": self.is_daemon,
         }
