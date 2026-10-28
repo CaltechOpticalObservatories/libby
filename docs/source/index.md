@@ -13,6 +13,7 @@ with pluggable transports (ZMQ or RabbitMQ). It gives you:
   `wait_for` (libby's `ktl.waitFor`).
 - **Keygrabber**: a daemon that polls keywords from other peers and writes them
   to a time-series database for dashboarding.
+- **Telemetry**: optional OpenTelemetry traces and metrics for every request.
 - **`libby` CLI** — a command-line front end for keyword peers
   (`show` / `modify` / `list` / `describe` / `waitfor`), with TAB completion
   and wildcard listing to find which peers are up.
@@ -27,6 +28,7 @@ client
 cli
 daemon
 keygrabber
+telemetry
 api/index
 ```
 
@@ -37,4 +39,5 @@ api/index
 - Writing a script or tool that talks to peers? Read {doc}`client`.
 - Poking at peers interactively? Read {doc}`cli`.
 - Recording keywords for Grafana? Read {doc}`keygrabber`.
+- Tracing requests across peers? Read {doc}`telemetry`.
 - Looking for a specific class or function? See {doc}`api/index`.

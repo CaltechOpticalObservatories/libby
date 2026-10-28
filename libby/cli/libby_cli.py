@@ -17,6 +17,7 @@ from urllib.parse import urlsplit, urlunsplit
 import argcomplete
 from argcomplete.shell_integration import shellcode
 
+from libby import telemetry
 from libby.cli.completion import (
     CompletionCache,
     Listings,
@@ -42,6 +43,9 @@ from libby.naming import coerce_value, parse_address_pattern, parse_keyword, pee
 from libby.response import unwrap
 
 DEFAULT_SELF_ID = "cli"
+CLI_SERVICE_NAME = "libby-cli"
+# Bound the exit flush, so a down collector cannot stall every command
+CLI_EXPORT_TIMEOUT_S = 1.0
 DEFAULT_TIMEOUT_S = 3.0
 
 DEFAULT_LOG_FILE = Path.home() / ".libby" / "cli.log"
@@ -115,7 +119,7 @@ def _setup_logging(namespace: argparse.Namespace, config: Dict[str, Any]) -> Non
             )
         except OSError:
             file_handler = logging.NullHandler()
-        file_handler.setFormatter(logging.Formatter(
+        file_handler.setFormatter(telemetry.TraceContextFormatter(
             "%(asctime)s %(levelname)s %(name)s: %(message)s"
         ))
         setattr(file_handler, "_libby_cli_handler", True)
@@ -791,9 +795,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     argv_display = shlex.join(_redact_argv(argv if argv is not None else sys.argv[1:]))
     logger.info("invoke cmd=%s argv=%s", namespace.cmd, argv_display)
 
+    handle = telemetry.configure(CLI_SERVICE_NAME, export_timeout_s=CLI_EXPORT_TIMEOUT_S,
+                                 export_metrics=False)
+    try:
+        return _run_command(namespace)
+    finally:
+        if handle is not None:
+            handle.shutdown()
+
+
+def _run_command(namespace: argparse.Namespace) -> int:
     start = time.monotonic()
     try:
-        rc = namespace.func(namespace)
+        with telemetry.operation(f"libby {namespace.cmd}"):
+            rc = namespace.func(namespace)
     except LibbyError as ex:
         # Core raises LibbyError; the CLI is the boundary that exits
         logger.warning("cmd=%s failed: %s", namespace.cmd, ex)

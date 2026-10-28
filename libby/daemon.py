@@ -9,9 +9,11 @@ import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Type, TypeVar
 
+from . import telemetry
 from .config import ConfigError, DaemonConfigLoader, with_env_overrides
 from .keyword import Keyword
 from .libby import Libby
+from .naming import qualified_peer_id
 
 
 Payload = Dict[str, Any]
@@ -102,6 +104,7 @@ class LibbyDaemon:
         self.libby: Optional[Libby] = None
         self._last_error: Optional[str] = None
         self._start_time: Optional[float] = None
+        self._telemetry: Optional[telemetry.Telemetry] = None
         self.logger = logging.getLogger(type(self).__name__)
         self._ensure_last_error_handler()
 
@@ -222,7 +225,7 @@ class LibbyDaemon:
 
         handler.setLevel(level)
         handler.setFormatter(
-            logging.Formatter(
+            telemetry.TraceContextFormatter(
                 str(
                     raw.get(
                         "format",
@@ -392,6 +395,10 @@ class LibbyDaemon:
         self._stop_event.clear()
         self._start_time = time.monotonic()
         try:
+            self._telemetry = telemetry.configure(
+                qualified_peer_id(self.config_peer_id(), self.config_group_id()),
+                self.config_group_id(),
+            )
             self.libby = self.build_libby()
             self._register_services(self.services)
             self._register_topics(self.topics)
@@ -437,6 +444,7 @@ class LibbyDaemon:
             )
         except Exception:
             self._started = False
+            self._close_telemetry()
             raise
 
     def request_stop(self) -> None:
@@ -459,6 +467,7 @@ class LibbyDaemon:
             self._started = False
             self._stop_event.set()
             self.logger.info("stopped")
+            self._close_telemetry()
 
     def serve(self) -> None:
         """Start the daemon and block until a signal or stop request."""
@@ -557,6 +566,11 @@ class LibbyDaemon:
                 libby.stop()
             except Exception:
                 self.logger.exception("Libby transport shutdown failed")
+
+    def _close_telemetry(self) -> None:
+        handle, self._telemetry = self._telemetry, None
+        if handle is not None:
+            handle.shutdown()
 
     def payload(self, value: Any = None, /, **extra: Any) -> dict:
         """Normalize a user result into a JSON-serializable dictionary."""
