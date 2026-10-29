@@ -7,9 +7,13 @@ allows one global provider per process.
 """
 from __future__ import annotations
 
+import http.server
 import importlib.util
 import logging
 import os
+import subprocess
+import sys
+import textwrap
 import threading
 import unittest
 from typing import Any, Dict, List, Optional
@@ -26,6 +30,7 @@ from tests.test_client_integration import (GROUP_ID, RABBITMQ_URL, RPC_TIMEOUT_S
 HAS_OTEL = (importlib.util.find_spec("opentelemetry") is not None
             and importlib.util.find_spec("opentelemetry.sdk") is not None)
 PUBLISH_WAIT_S = 5.0
+SUBPROCESS_TIMEOUT_S = 60.0
 UNREACHABLE_TTL_MS = 300
 TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 
@@ -34,7 +39,11 @@ TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
 # pylint: disable=possibly-used-before-assignment
 
 if HAS_OTEL:
-    from opentelemetry import metrics, trace
+    from opentelemetry import metrics, propagate, trace
+    from opentelemetry.propagators.composite import CompositePropagator
+    # Generated protobuf module, which pylint cannot introspect
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (  # pylint: disable=no-name-in-module
+        ExportTraceServiceRequest)
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import InMemoryMetricReader
     from opentelemetry.sdk.trace import TracerProvider
@@ -96,7 +105,7 @@ class DisabledTests(unittest.TestCase):
             "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
         )}
         with mock.patch.dict(os.environ, variables):
-            self.assertIsNone(telemetry.configure("hsfei.adc"))
+            self.assertFalse(telemetry.configure("hsfei.adc"))
         self.assertFalse(telemetry.enabled())
 
     def test_sdk_disabled_wins_over_an_endpoint(self):
@@ -182,6 +191,81 @@ class TracedUnitTests(unittest.TestCase):
         self.assertIn({"rpc.system": "libby", "rpc.method": "positionvalue",
                        "server.address": "nobody", "error.type": "timeout"},
                       _attributes(_duration_points("rpc.client.call.duration")))
+
+
+    def test_envelope_context_ignores_the_global_propagator(self):
+        """Write and read W3C trace context even when OTEL_PROPAGATORS names none."""
+        original = propagate.get_global_textmap()
+        propagate.set_global_textmap(CompositePropagator([]))
+        try:
+            with telemetry.client_call("positionvalue", "hsfei.adc") as call:
+                pass
+            telemetry.traced_handler(lambda payload, ctx: {"ok": True})(
+                {}, {"key": "positionvalue", "traceparent": call.traceparent,
+                     "tracestate": call.tracestate})
+        finally:
+            propagate.set_global_textmap(original)
+        self.assertIsNotNone(call.traceparent)
+        (client_span,) = _by_kind(SPANS.get_finished_spans(), SpanKind.CLIENT)
+        (server_span,) = _by_kind(SPANS.get_finished_spans(), SpanKind.SERVER)
+        self.assertEqual(server_span.parent.span_id, client_span.context.span_id)
+
+
+class _SpanSink(http.server.BaseHTTPRequestHandler):
+    """OTLP/HTTP endpoint recording the names of the spans posted to it."""
+
+    names: List[str] = []
+
+    def do_POST(self) -> None:  # pylint: disable=invalid-name
+        """Record span names from a trace export and accept every export."""
+        body = self.rfile.read(int(self.headers["Content-Length"]))
+        if self.path == "/v1/traces":
+            request = ExportTraceServiceRequest()
+            request.ParseFromString(body)
+            self.names.extend(span.name for resource in request.resource_spans
+                              for scope in resource.scope_spans for span in scope.spans)
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *_args: Any) -> None:  # pylint: disable=arguments-differ
+        """Keep the test output quiet."""
+
+
+# A fresh process, since the SDK install under test is once per process
+_RESTART_SCRIPT = textwrap.dedent("""
+    import sys
+    from libby import telemetry
+    from libby.daemon import LibbyDaemon
+
+    daemon = LibbyDaemon.from_config({"peer_id": "restart", "transport": "zmq",
+                                      "bind": sys.argv[1], "discovery_enabled": False})
+    for run in ("first run", "second run"):
+        daemon.start()
+        with telemetry.operation(run):
+            pass
+        daemon.stop()
+""")
+
+
+@unittest.skipUnless(HAS_OTEL, "needs the otel extra")
+class SdkLifecycleTests(unittest.TestCase):
+    """The SDK libby installs survives a daemon stopping and starting again."""
+
+    def test_restarted_daemon_keeps_exporting(self):
+        """Export spans from both runs of a daemon restarted in one process."""
+        _SpanSink.names = []
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _SpanSink)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        env = {**os.environ,
+               "OTEL_EXPORTER_OTLP_ENDPOINT": f"http://127.0.0.1:{server.server_address[1]}"}
+        try:
+            subprocess.run([sys.executable, "-c", _RESTART_SCRIPT, _free_endpoint()],
+                           env=env, check=True, timeout=SUBPROCESS_TIMEOUT_S,
+                           capture_output=True)
+        finally:
+            server.shutdown()
+            server.server_close()
+        self.assertEqual(sorted(_SpanSink.names), ["first run", "second run"])
 
 
 class _Bases:  # pylint: disable=too-few-public-methods

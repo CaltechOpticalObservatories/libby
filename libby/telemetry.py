@@ -37,10 +37,13 @@ class _Instruments:
     def __init__(self) -> None:
         # Deferred: OpenTelemetry is the optional libby[otel] extra
         # pylint: disable=import-outside-toplevel
-        from opentelemetry import metrics, propagate, trace
+        from opentelemetry import metrics, trace
+        from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
         self.trace = trace
-        self.propagate = propagate
+        self.metrics = metrics
+        # bamboo's envelope fields are W3C Trace Context whatever OTEL_PROPAGATORS says
+        self.propagator = TraceContextTextMapPropagator()
         self.tracer = trace.get_tracer("libby")
         meter = metrics.get_meter("libby")
         self.client_duration = meter.create_histogram(
@@ -61,7 +64,7 @@ class _Instruments:
         carrier = {"traceparent": traceparent}
         if tracestate:
             carrier["tracestate"] = tracestate
-        return self.propagate.extract(carrier)
+        return self.propagator.extract(carrier)
 
     def finish(self, span: Any, error_type: Optional[str], attributes: Dict[str, Any],
                histogram: Any, started: float) -> None:
@@ -78,21 +81,6 @@ class _Instruments:
 _instruments: Optional[_Instruments] = None  # pylint: disable=invalid-name
 
 
-class Telemetry:  # pylint: disable=too-few-public-methods
-    """SDK providers installed by :func:`configure`; shut down to flush them."""
-
-    def __init__(self, tracer_provider: Any, meter_provider: Optional[Any]) -> None:
-        self._tracer_provider = tracer_provider
-        self._meter_provider = meter_provider
-
-    def shutdown(self) -> None:
-        """Stop recording, export what is pending and stop the exporters."""
-        disable()
-        self._tracer_provider.shutdown()
-        if self._meter_provider is not None:
-            self._meter_provider.shutdown()
-
-
 def export_requested() -> bool:
     """Return whether the environment names an OTLP endpoint to export to."""
     if os.environ.get("OTEL_SDK_DISABLED", "").strip().lower() == "true":
@@ -107,35 +95,49 @@ def enabled() -> bool:
 
 def configure(service_name: str, service_namespace: Optional[str] = None, *,
               export_timeout_s: Optional[float] = None,
-              export_metrics: bool = True) -> Optional[Telemetry]:
+              export_metrics: bool = True) -> bool:
     """Turn on tracing and metrics for this process if export is requested.
 
     Install the OTLP SDK unless the application already installed its own
-    providers, in which case libby records into those. Return a
-    :class:`Telemetry` only to the caller that installed the SDK, since it
-    owns the shutdown. Short-lived processes pass ``export_metrics=False``:
-    each run is a new ``service.instance.id``, so its metrics are new series.
+    providers, in which case libby records into those. The OTel API allows one
+    provider per process, so the SDK stays installed until the process exits
+    and later calls only report whether telemetry is on. Short-lived processes
+    pass ``export_metrics=False``: each run is a new ``service.instance.id``,
+    so its metrics are new series.
     """
-    if _instruments is not None or not export_requested():
-        return None
+    if _instruments is not None:
+        return True
+    if not export_requested():
+        return False
     try:
         # Deferred: OpenTelemetry is the optional libby[otel] extra
         # pylint: disable=import-outside-toplevel
         from opentelemetry import trace
-        handle = None
         if isinstance(trace.get_tracer_provider(), trace.ProxyTracerProvider):
-            handle = _install_sdk(service_name, service_namespace, export_timeout_s,
-                                  export_metrics)
+            _install_sdk(service_name, service_namespace, export_timeout_s, export_metrics)
     except ImportError:
         logger.warning("an OTLP endpoint is set but libby[otel] is not installed; "
                        "telemetry stays off")
-        return None
+        return False
     use_current_providers()
-    return handle
+    return True
+
+
+def flush() -> None:
+    """Export pending spans and metrics now, e.g. before a daemon stops."""
+    instruments = _instruments
+    if instruments is None:
+        return
+    for provider in (instruments.trace.get_tracer_provider(),
+                     instruments.metrics.get_meter_provider()):
+        # API-only providers have nothing to flush
+        force_flush = getattr(provider, "force_flush", None)
+        if force_flush is not None:
+            force_flush()
 
 
 def _install_sdk(service_name: str, service_namespace: Optional[str],
-                 export_timeout_s: Optional[float], export_metrics: bool) -> Telemetry:
+                 export_timeout_s: Optional[float], export_metrics: bool) -> None:
     # pylint: disable=import-outside-toplevel
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -148,23 +150,21 @@ def _install_sdk(service_name: str, service_namespace: Optional[str],
     tracer_provider = TracerProvider(resource=resource)
     tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(**timeout)))
     trace.set_tracer_provider(tracer_provider)
-    meter_provider = _install_meter(resource, timeout) if export_metrics else None
-    return Telemetry(tracer_provider, meter_provider)
+    if export_metrics:
+        _install_meter(resource, timeout)
 
 
-def _install_meter(resource: Any, timeout: Dict[str, float]) -> Any:
+def _install_meter(resource: Any, timeout: Dict[str, float]) -> None:
     # pylint: disable=import-outside-toplevel
     from opentelemetry import metrics
     from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-    meter_provider = MeterProvider(
+    metrics.set_meter_provider(MeterProvider(
         resource=resource,
         metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter(**timeout))],
-    )
-    metrics.set_meter_provider(meter_provider)
-    return meter_provider
+    ))
 
 
 def _resource(service_name: str, service_namespace: Optional[str]) -> Any:
@@ -215,7 +215,7 @@ class Call:
         call._finish = lambda span, error_type: instruments.finish(
             span, error_type, attributes, histogram, started)
         carrier: Dict[str, str] = {}
-        instruments.propagate.inject(carrier)
+        instruments.propagator.inject(carrier)
         call.traceparent = carrier.get("traceparent")
         call.tracestate = carrier.get("tracestate")
         return call

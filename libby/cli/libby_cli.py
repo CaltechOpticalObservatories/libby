@@ -795,13 +795,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     argv_display = shlex.join(_redact_argv(argv if argv is not None else sys.argv[1:]))
     logger.info("invoke cmd=%s argv=%s", namespace.cmd, argv_display)
 
-    handle = telemetry.configure(CLI_SERVICE_NAME, export_timeout_s=CLI_EXPORT_TIMEOUT_S,
-                                 export_metrics=False)
+    telemetry.configure(CLI_SERVICE_NAME, export_timeout_s=CLI_EXPORT_TIMEOUT_S,
+                        export_metrics=False)
     try:
         return _run_command(namespace)
     finally:
-        if handle is not None:
-            handle.shutdown()
+        telemetry.flush()
 
 
 def _run_command(namespace: argparse.Namespace) -> int:
