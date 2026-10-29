@@ -12,8 +12,9 @@ pip install "libby[otel]"
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 ```
 
-Every `LibbyDaemon` then exports from `start()` until `stop()`, and the `libby`
-CLI exports each command's trace. The CLI exports no metrics, since every run
+Every `LibbyDaemon` turns export on in `start()` and flushes in `stop()`, and
+the `libby` CLI exports each command's trace. The SDK stays installed until the
+process exits, so a daemon restarted in the same process keeps exporting. The CLI exports no metrics, since every run
 would start new series. Exports use OTLP over HTTP and honour the standard
 `OTEL_*` variables, e.g. `OTEL_TRACES_SAMPLER` or `OTEL_SDK_DISABLED=true`.
 
