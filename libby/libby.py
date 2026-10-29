@@ -10,6 +10,7 @@ from bamboo.keys import KeyRegistry
 from bamboo.protocol import Protocol
 from bamboo.discovery import Discovery
 
+from . import telemetry
 from .keyword import Keyword, match_pattern
 from .keyword_registry import KeywordRegistry
 from .naming import qualified_peer_id
@@ -48,8 +49,7 @@ class Libby:
 
         # bamboo owns the semantics
         if keys:
-            for k in keys:
-                self.proto.serve(k, callback if callback else (lambda *_: None))
+            self.serve_keys(keys, callback if callback else (lambda *_: None))
 
         # Periodic discovery (provided by bamboo)
         self._disco: Optional[Discovery] = None
@@ -186,7 +186,13 @@ class Libby:
 
     # thin passthroughs to bamboo.Protocol
     def request(self, peer_id: str, key: str, payload: Dict[str, Any], ttl_ms: int = 8000):
-        return self.proto.request_peer(peer_id, key, payload, timeout_s=ttl_ms / 1000.0)
+        with telemetry.client_call(key, peer_id) as call:
+            result = self.proto.request_peer(
+                peer_id, key, payload, timeout_s=ttl_ms / 1000.0,
+                traceparent=call.traceparent, tracestate=call.tracestate,
+            )
+            call.check_request(result)
+            return result
 
     def rpc(self, peer_id: str, key: str, payload: Dict[str, Any], ttl_ms: int = 8000):
         return self.request(peer_id, key, payload, ttl_ms)
@@ -204,10 +210,12 @@ class Libby:
         address book. Our own reply is dropped: on RabbitMQ our queue sits on
         the fanout exchange like everyone else's.
         """
-        msg = MessageBuilder(sourceid=self.self_id).req(key, payload).to(None).build()
-        with self._reply_queue(msg.env.transid) as replies:
-            self.proto.send(msg)
-            return list(self._drain_replies(replies, timeout_s))
+        with telemetry.client_call(key, None) as call:
+            msg = (MessageBuilder(sourceid=self.self_id).req(key, payload).to(None)
+                   .trace(call.traceparent, call.tracestate).build())
+            with self._reply_queue(msg.env.transid) as replies:
+                self.proto.send(msg)
+                return list(self._drain_replies(replies, timeout_s))
 
     @contextmanager
     def _reply_queue(self, transid: str) -> Iterator["queue.Queue[Any]"]:
@@ -234,8 +242,9 @@ class Libby:
                 yield BroadcastReply(resp.env.sourceid, dict(resp.env.payload or {}))
 
     def serve_keys(self, keys: List[str], callback: Callable[[dict, dict], Optional[dict]]) -> None:
+        traced = telemetry.traced_handler(callback)
         for k in keys:
-            self.proto.serve(k, callback)
+            self.proto.serve(k, traced)
 
     def register_keyword(self, keyword: Keyword) -> None:
         if keyword.name in self._keywords:
@@ -333,14 +342,16 @@ class Libby:
         return {"ok": True, "values": values}
 
     def listen(self, topic: str, handler: Callable[[Any], None]) -> None:
-        self.proto.listen(topic, handler)
+        self.proto.listen(topic, telemetry.traced_listener(topic, handler))
 
     def listen_many(self, handlers: Dict[str, Callable[[Any], None]]) -> None:
         for topic, h in handlers.items():
             self.listen(topic, h)
 
     def publish(self, topic: str, payload: Dict[str, Any]) -> int:
-        return self.proto.publish(topic, payload)
+        with telemetry.publish_call(topic) as call:
+            return self.proto.publish(topic, payload, traceparent=call.traceparent,
+                                      tracestate=call.tracestate)
 
     def emit(self, topic: str, payload: Dict[str, Any]) -> int:
         return self.publish(topic, payload)

@@ -9,9 +9,11 @@ import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Type, TypeVar
 
+from . import telemetry
 from .config import ConfigError, DaemonConfigLoader, with_env_overrides
 from .keyword import Keyword
 from .libby import Libby
+from .naming import qualified_peer_id
 
 
 Payload = Dict[str, Any]
@@ -222,7 +224,7 @@ class LibbyDaemon:
 
         handler.setLevel(level)
         handler.setFormatter(
-            logging.Formatter(
+            telemetry.TraceContextFormatter(
                 str(
                     raw.get(
                         "format",
@@ -392,6 +394,10 @@ class LibbyDaemon:
         self._stop_event.clear()
         self._start_time = time.monotonic()
         try:
+            telemetry.configure(
+                qualified_peer_id(self.config_peer_id(), self.config_group_id()),
+                self.config_group_id(),
+            )
             self.libby = self.build_libby()
             self._register_services(self.services)
             self._register_topics(self.topics)
@@ -459,6 +465,7 @@ class LibbyDaemon:
             self._started = False
             self._stop_event.set()
             self.logger.info("stopped")
+            telemetry.flush()
 
     def serve(self) -> None:
         """Start the daemon and block until a signal or stop request."""
