@@ -73,6 +73,8 @@ class LibbyDaemon:
             "discovery_interval_s",
             "transport",
             "rabbitmq_url",
+            "dds_domain_id",
+            "dds_config",
             "group_id",
             "fail_fast_on_start",
         }
@@ -88,6 +90,8 @@ class LibbyDaemon:
     # their preferred transport explicitly without changing behavior for existing ZMQ users.
     transport: str = "zmq"
     rabbitmq_url: Optional[str] = None
+    dds_domain_id: int = 0
+    dds_config: Optional[str] = None
     group_id: Optional[str] = None
 
     # A daemon that fails to initialize should not continue advertising a
@@ -277,6 +281,12 @@ class LibbyDaemon:
     def config_rabbitmq_url(self) -> str:
         return self.rabbitmq_url or "amqp://localhost"
 
+    def config_dds_domain_id(self) -> int:
+        return int(self.dds_domain_id)
+
+    def config_dds_config(self) -> Optional[str]:
+        return self.dds_config
+
     def config_group_id(self) -> Optional[str]:
         return self.group_id
 
@@ -363,6 +373,17 @@ class LibbyDaemon:
                 is_daemon=True,
             )
 
+        if transport == "cyclonedds":
+            return Libby.cyclonedds(
+                self_id=self.config_peer_id(),
+                keys=[],
+                callback=None,
+                group_id=self.config_group_id(),
+                domain_id=self.config_dds_domain_id(),
+                dds_config=self.config_dds_config(),
+                is_daemon=True,
+            )
+
         if transport == "zmq":
             return Libby.zmq(
                 self_id=self.config_peer_id(),
@@ -379,7 +400,7 @@ class LibbyDaemon:
 
         raise ValueError(
             f"unsupported Libby transport {self.transport!r}; "
-            "expected 'zmq' or 'rabbitmq'"
+            "expected 'zmq', 'rabbitmq' or 'cyclonedds'"
         )
 
     def start(self) -> None:

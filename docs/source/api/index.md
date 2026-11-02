@@ -134,6 +134,12 @@ the docs build does not install the optional `influxdb` extra.
 ```
 
 ```{eval-rst}
+.. automodule:: libby.cyclonedds_transport
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
 .. automodule:: libby._transport_errors
    :members:
    :show-inheritance:

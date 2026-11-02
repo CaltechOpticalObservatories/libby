@@ -165,6 +165,57 @@ class Libby:
             is_daemon=is_daemon,
         )
 
+    @classmethod
+    def cyclonedds(
+        cls,
+        self_id: str,
+        keys: Optional[List[str]] = None,
+        callback: Optional[Callable[[dict, dict], Optional[dict]]] = None,
+        group_id: Optional[str] = None,
+        *,
+        domain_id: int = 0,
+        dds_config: Optional[str] = None,
+        is_daemon: bool = False,
+    ) -> "Libby":
+        """
+        Create a Libby instance using the Cyclone DDS transport: peer to peer,
+        no broker, peers found by DDS discovery.
+
+        Args:
+            self_id: Unique identifier for this peer
+            keys: List of RPC keys this peer will serve
+            callback: Default callback for RPC requests
+            group_id: Optional group identifier
+            domain_id: DDS domain; only peers on the same domain see each other
+            dds_config: Cyclone XML, or a path/URI to it; when unset, Cyclone
+                reads ``CYCLONEDDS_URI``
+
+        Returns:
+            Configured Libby instance
+        """
+        try:
+            from .cyclonedds_transport import CycloneDdsTransport
+        except Exception as e:
+            raise RuntimeError(
+                "Cyclone DDS transport not available. Install optional deps:\n"
+                "  pip install libby[cyclonedds]"
+            ) from e
+
+        wire_id = qualified_peer_id(self_id, group_id)
+        t = CycloneDdsTransport(peer_id=wire_id, domain_id=domain_id,
+                                dds_config=dds_config, group_id=group_id)
+        t.start()
+        return cls(
+            self_id=wire_id,
+            transport=t,
+            keys=keys,
+            callback=callback,
+            discover=False,
+            discover_interval_s=0,
+            hello_on_start=False,
+            is_daemon=is_daemon,
+        )
+
     # lifecycle
     def start(self) -> None:
         if hasattr(self.transport, "start"):

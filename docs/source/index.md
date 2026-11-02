@@ -1,7 +1,7 @@
 # Libby
 
 Libby is a tiny messaging library built on [Bamboo](https://github.com/CaltechOpticalObservatories/bamboo)
-with pluggable transports (ZMQ or RabbitMQ). It gives you:
+with pluggable transports (ZMQ, RabbitMQ or Cyclone DDS). It gives you:
 
 - **Keywords** — typed, named values (`show` / `modify`) served over RPC, with
   a registry, auto-generated `keys.list` / `keys.describe` / `keys.read`
