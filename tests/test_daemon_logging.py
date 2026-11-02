@@ -12,7 +12,8 @@ import unittest
 from typing import Any, Dict, Optional
 from unittest import mock
 
-from libby.daemon import LibbyDaemon
+from libby import telemetry
+from libby.daemon import DEFAULT_LOG_FORMAT, LibbyDaemon
 from libby.keygrabber import main as keygrabber_main
 
 # lasterror is read back from the daemon's own attribute
@@ -86,6 +87,14 @@ class KeygrabberEntryPointTests(unittest.TestCase):
     def test_leaves_a_configured_logging_section_alone(self):
         """Do not add a root handler that would print every line twice."""
         self._run({"level": "DEBUG"}).assert_not_called()
+
+    def test_stderr_lines_carry_trace_ids(self):
+        """Format stderr with the formatter that appends the active trace ids."""
+        with mock.patch.object(keygrabber_main.logging, "basicConfig") as basic_config:
+            keygrabber_main.log_to_stderr()
+        (handler,) = basic_config.call_args.kwargs["handlers"]
+        self.assertIsInstance(handler.formatter, telemetry.TraceContextFormatter)
+        self.assertEqual(handler.formatter._fmt, DEFAULT_LOG_FORMAT)  # pylint: disable=protected-access
 
     def test_quiets_pika_connection_chatter(self):
         pika = logging.getLogger("pika")

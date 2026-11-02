@@ -11,6 +11,7 @@ import sys
 from collections.abc import Mapping
 from typing import List, Optional
 
+from .. import telemetry
 from ..daemon import DEFAULT_LOG_FORMAT
 from ..errors import LibbyError
 from .daemon import KeygrabberDaemon
@@ -49,7 +50,9 @@ def log_to_stderr() -> None:
     already given the daemon its own handler, and a second one on the root
     logger would print every line twice.
     """
-    logging.basicConfig(level=logging.INFO, format=DEFAULT_LOG_FORMAT)
+    handler = logging.StreamHandler()
+    handler.setFormatter(telemetry.TraceContextFormatter(DEFAULT_LOG_FORMAT))
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
     # pika logs each connection step at INFO, which the transport's
     # once-a-second reconnect loop would turn into a flood during an outage
     logging.getLogger("pika").setLevel(logging.WARNING)
