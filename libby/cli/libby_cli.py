@@ -334,8 +334,10 @@ def cmd_show(namespace: argparse.Namespace) -> int:
             # keep working against daemons still running a libby without it,
             # and a human reading a handful of keywords gains nothing from the
             # round trip saved
+            # The keyword is everything after <group>.<daemon>, so a dotted
+            # one like the keygrabber's adc.lastsample keeps its prefix
             rows: List[Tuple[str, Dict[str, Any]]] = [
-                (name, _rpc_show_one(lib, peer, name.rsplit(".", 1)[-1], timeout))
+                (name, _rpc_show_one(lib, peer, parse_keyword(name)[2], timeout))
                 for name in matches
             ]
             return _emit_many(rows, as_json=namespace.json)
