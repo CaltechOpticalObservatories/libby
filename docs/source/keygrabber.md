@@ -24,6 +24,10 @@ It is an ordinary `LibbyDaemon`, so `SIGTERM` stops it cleanly and so does
 writing its `shutdown` keyword. On the way out it gives its retry queue a
 bounded chance to drain, so a graceful stop does not lose the last tick.
 
+It logs INFO and above to stderr, which systemd puts in the journal. A
+`logging` section in the config (`level`, `file`, `format`, `propagate`)
+replaces that default rather than adding to it.
+
 ## Config
 
 A keygrabber config is an ordinary daemon config (`peer_id`, `group_id`,

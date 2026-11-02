@@ -6,9 +6,12 @@ raises catchable exceptions.
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
+from collections.abc import Mapping
 from typing import List, Optional
 
+from ..daemon import DEFAULT_LOG_FORMAT
 from ..errors import LibbyError
 from .daemon import KeygrabberDaemon
 
@@ -28,6 +31,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         daemon = KeygrabberDaemon.from_config_file(namespace.config,
                                                    namespace.daemon_id)
+        if not isinstance(daemon.get_config("logging"), Mapping):
+            log_to_stderr()
         daemon.serve()
     except KeyboardInterrupt:
         return 0
@@ -35,6 +40,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"keygrabber: {exc}", file=sys.stderr)
         return 1
     return 0
+
+
+def log_to_stderr() -> None:
+    """Send INFO and above to stderr, which systemd puts in the journal.
+
+    Only for a config with no ``logging`` section. One with a section has
+    already given the daemon its own handler, and a second one on the root
+    logger would print every line twice.
+    """
+    logging.basicConfig(level=logging.INFO, format=DEFAULT_LOG_FORMAT)
+    # pika logs each connection step at INFO, which the transport's
+    # once-a-second reconnect loop would turn into a flood during an outage
+    logging.getLogger("pika").setLevel(logging.WARNING)
 
 
 if __name__ == "__main__":
