@@ -41,6 +41,12 @@ To also pull in the docs toolchain (Sphinx + the Shibuya theme):
 pip install -e ".[docs]"
 ```
 
+For OpenTelemetry export (see {doc}`telemetry`):
+
+```bash
+pip install -e ".[otel]"
+```
+
 ## Testing
 
 ```bash
