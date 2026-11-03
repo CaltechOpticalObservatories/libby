@@ -105,6 +105,12 @@ the docs build does not install the optional `influxdb` extra.
    :show-inheritance:
 ```
 
+```{eval-rst}
+.. automodule:: libby.telemetry_backend
+   :members:
+   :show-inheritance:
+```
+
 ## Responses and errors
 
 ```{eval-rst}

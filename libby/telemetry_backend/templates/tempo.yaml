@@ -1,0 +1,50 @@
+# Rendered from libby's telemetry backend; edits here are lost on the next install.
+
+stream_over_http_enabled: true
+server:
+  http_listen_address: @query_bind@
+  http_listen_port: 3200
+  grpc_listen_address: 127.0.0.1
+  grpc_listen_port: 9095
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          # 4317 is the Collector's; only it sends here
+          endpoint: 127.0.0.1:4417
+storage:
+  trace:
+    backend: local
+    local:
+      path: @data@/tempo/traces
+    wal:
+      path: @data@/tempo/wal
+# Tempo 3 applies retention in the scheduler and compacts in the worker; both
+# read block_retention, so it is set in each
+backend_scheduler:
+  local_work_path: @data@/tempo/work
+  provider:
+    compaction:
+      compaction:
+        block_retention: @trace_retention@
+backend_worker:
+  compaction:
+    block_retention: @trace_retention@
+live_store:
+  wal:
+    path: @data@/tempo/live-store/traces
+  shutdown_marker_dir: @data@/tempo/live-store/shutdown-marker
+block_builder:
+  wal:
+    path: @data@/tempo/block-builder/traces
+metrics_generator:
+  storage:
+    path: @data@/tempo/generator/wal
+    remote_write:
+      - url: http://127.0.0.1:9090/api/v1/write
+        send_exemplars: true
+overrides:
+  defaults:
+    metrics_generator:
+      processors: [service-graphs, span-metrics]
