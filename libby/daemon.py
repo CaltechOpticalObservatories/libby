@@ -250,14 +250,18 @@ class LibbyDaemon:
 
     ### Optional hooks
 
-    def on_start(self, libby: Libby) -> None:
-        """Initialize hardware and register keywords."""
+    def on_start(self) -> None:
+        """Initialize hardware and register keywords. ``self.libby`` is set."""
 
-    def on_stop(self, libby: Optional[Libby] = None) -> None:
-        """Release hardware resources."""
+    def on_stop(self) -> None:
+        """Release hardware resources.
 
-    def on_hello(self, libby: Libby) -> None:
-        """Run after the initial discovery hello."""
+        Also runs after a start that failed partway, so ``self.libby`` may be
+        None; it is closed only after this returns.
+        """
+
+    def on_hello(self) -> None:
+        """Run after the initial discovery hello. ``self.libby`` is set."""
 
     def on_event(self, topic: str, msg: Any) -> None:
         self.logger.info("%s: %s", topic, msg.env.payload)
@@ -418,12 +422,12 @@ class LibbyDaemon:
             if self.config_discovery_enabled():
                 try:
                     self.libby.hello()
-                    self.on_hello(self.libby)
+                    self.on_hello()
                 except Exception:
                     self.logger.exception("discovery hello failed")
 
             try:
-                self.on_start(self.libby)
+                self.on_start()
             except Exception:
                 self.logger.exception("daemon initialization failed")
                 if self.fail_fast_on_start:
@@ -454,7 +458,7 @@ class LibbyDaemon:
             return
 
         try:
-            self.on_stop(self.libby)
+            self.on_stop()
         except Exception:
             self.logger.exception("daemon shutdown hook failed")
         finally:

@@ -12,7 +12,7 @@ class PeerD(LibbyDaemon):
     def echo(self, payload: Payload) -> Dict[str, Any]:
         return self.payload(payload)
 
-    def on_start(self, libby):
+    def on_start(self):
         import time
         target = "peer-B"
         key = "perf.echo"
@@ -21,17 +21,17 @@ class PeerD(LibbyDaemon):
         print(f"[{self.config_peer_id()}] routes: {ab}")
 
         # 1) Best-effort
-        libby.wait_for_peer(target, timeout_s=2.0)
+        self.libby.wait_for_peer(target, timeout_s=2.0)
 
         # 2) If the key isn't known yet (discovery not populated)
-        if not libby.wait_for_key(target, key, timeout_s=1.0):
+        if not self.libby.wait_for_key(target, key, timeout_s=1.0):
             try:
-                libby.learn_peer_keys(target, [key])
+                self.libby.learn_peer_keys(target, [key])
             except Exception:
                 pass
 
         print(f"[{self.config_peer_id()}] asking {target}: {key} …")
-        res = libby.rpc(target, key, {"t0": time.time()}, ttl_ms=8000)
+        res = self.libby.rpc(target, key, {"t0": time.time()}, ttl_ms=8000)
         print(f"[{self.config_peer_id()}] result: {res}")
 
 

@@ -13,7 +13,6 @@ from ..client import Client
 from ..config import ConfigError, DaemonConfigLoader, with_env_overrides
 from ..daemon import LibbyDaemon
 from ..errors import LibbyError
-from ..libby import Libby
 from .collection import FAILURES_BEFORE_BACKOFF, Collection
 from .config import TIMEOUT_HEADROOM, KeygrabberConfig, build_sink, parse_config
 from .scheduler import Scheduler
@@ -112,10 +111,10 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         self._reconnect_wanted = False
         self._clock: Callable[[], float] = time.monotonic
 
-    def on_start(self, libby: Libby) -> None:
+    def on_start(self) -> None:
         """Parse config, open the sink, and start the reader and writer threads."""
         self._settings = parse_config(self._config)
-        self._client = Client(libby)
+        self._client = Client(self.libby)
         self._writer = RetryingWriter(self.make_sink(),
                                       policy=self._settings.retry)
         self._writer.connect()
@@ -133,7 +132,7 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         self.logger.info("collecting %d collections with %d workers",
                          len(self._collections), self._settings.workers)
 
-    def on_stop(self, libby: Optional[Libby] = None) -> None:
+    def on_stop(self) -> None:
         """Stop the threads and close the sink once the writer has drained it.
 
         The draining happens on the writer thread rather than here, so only one

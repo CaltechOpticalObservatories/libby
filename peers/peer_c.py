@@ -32,7 +32,7 @@ class PeerC(LibbyDaemon):
             "status": self.last_status,
         }
 
-    def on_start(self, libby):
+    def on_start(self):
         print("[PeerC] listening for alerts.status")
 
 

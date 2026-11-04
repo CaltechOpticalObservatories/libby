@@ -52,7 +52,7 @@ class _FixtureDaemon(LibbyDaemon):
     group_id = GROUP_ID
     discovery_enabled = False
 
-    def on_start(self, libby) -> None:
+    def on_start(self) -> None:
         state = {"pos": INITIAL_POSITION}
         self.keyword_registry.float(
             "positionvalue",
@@ -72,7 +72,7 @@ class _LifecycleDaemon(LibbyDaemon):
     group_id = GROUP_ID
     discovery_enabled = False
 
-    def on_start(self, libby) -> None:
+    def on_start(self) -> None:
         self.keyword_registry.trigger(
             "shutdown",
             action=self.request_stop,

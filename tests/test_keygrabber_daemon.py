@@ -47,7 +47,7 @@ class _FixtureDaemon(LibbyDaemon):
     group_id = "hsfei"
     discovery_enabled = False
 
-    def on_start(self, libby) -> None:
+    def on_start(self) -> None:
         self.keyword_registry.float("positionvalue", getter=lambda: 7.5,
                                     units="mm")
         self.keyword_registry.bool("isconnected", getter=lambda: True)
