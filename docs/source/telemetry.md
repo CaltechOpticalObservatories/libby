@@ -56,3 +56,21 @@ can link it to its trace.
 
 Off, each hook costs about 0.1 µs. On, a traced request adds roughly 15 µs on
 the sender and 12 µs on the handler.
+
+## Backend
+
+`libby.telemetry_backend` describes the backend libby exports to, so an
+installer can set it up without containers or package repositories:
+
+- an OpenTelemetry Collector receiving OTLP on ports 4317 (gRPC) and 4318
+  (HTTP), and fanning out to
+- Prometheus (metrics, port 9090), Tempo (traces, port 3200) and Loki (logs,
+  port 3100), which Grafana reads.
+
+It holds each component's pinned release with its SHA-256 (`RELEASES`), and a
+config and a systemd unit template per service. `render()` fills a template
+from the values in `PLACEHOLDERS`: directories, the account to run as, bind
+addresses and retention. instrumentctl's `install` uses it on the host an
+instrument names as its telemetry backend.
+
+Upgrading a component means changing its `Release` version, URL and checksum.

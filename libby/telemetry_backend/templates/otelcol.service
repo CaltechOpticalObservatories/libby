@@ -1,0 +1,22 @@
+# Rendered from libby's telemetry backend; edits here are lost on the next install.
+
+[Unit]
+Description=@display_name@ telemetry: OpenTelemetry Collector
+After=network-online.target @name@-prometheus.service @name@-tempo.service @name@-loki.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@user@
+Group=@user@
+ExecStart=@bin@/otelcol-contrib --config=@etc@/otelcol.yaml
+Restart=on-failure
+RestartSec=5
+SyslogIdentifier=@name@-otelcol
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

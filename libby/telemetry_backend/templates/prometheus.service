@@ -1,0 +1,26 @@
+# Rendered from libby's telemetry backend; edits here are lost on the next install.
+
+[Unit]
+Description=@display_name@ telemetry: Prometheus
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@user@
+Group=@user@
+ExecStart=@bin@/prometheus --config.file=@etc@/prometheus.yaml \
+  --storage.tsdb.path=@data@/prometheus --storage.tsdb.retention.time=@metrics_retention@ \
+  --web.listen-address=@query_bind@:9090 \
+  --web.enable-otlp-receiver --web.enable-remote-write-receiver
+Restart=on-failure
+RestartSec=5
+SyslogIdentifier=@name@-prometheus
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=@data@/prometheus
+
+[Install]
+WantedBy=multi-user.target

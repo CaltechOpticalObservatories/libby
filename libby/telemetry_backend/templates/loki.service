@@ -1,0 +1,23 @@
+# Rendered from libby's telemetry backend; edits here are lost on the next install.
+
+[Unit]
+Description=@display_name@ telemetry: Loki
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@user@
+Group=@user@
+ExecStart=@bin@/loki -config.file=@etc@/loki.yaml
+Restart=on-failure
+RestartSec=5
+SyslogIdentifier=@name@-loki
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=@data@/loki
+
+[Install]
+WantedBy=multi-user.target

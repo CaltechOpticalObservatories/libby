@@ -1,0 +1,40 @@
+# Rendered from libby's telemetry backend; edits here are lost on the next install.
+#
+# Receives OTLP from daemons and agents, and fans it out to the services below
+# on this host.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: @otlp_bind@:4317
+      http:
+        endpoint: @otlp_bind@:4318
+
+processors:
+  batch: {}
+
+exporters:
+  otlp_http/prometheus:
+    metrics_endpoint: http://127.0.0.1:9090/api/v1/otlp/v1/metrics
+  otlp_grpc/tempo:
+    endpoint: 127.0.0.1:4417
+    tls:
+      insecure: true
+  otlp_http/loki:
+    endpoint: http://127.0.0.1:3100/otlp
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/prometheus]
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_grpc/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp_http/loki]
