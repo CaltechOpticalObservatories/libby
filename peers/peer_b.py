@@ -33,7 +33,7 @@ class PeerB(LibbyDaemon):
         },
     }
 
-    def on_start(self, libby):
+    def on_start(self):
         print("[PeerB] ready")
         print("[PeerB] services:", list(self.services))
 

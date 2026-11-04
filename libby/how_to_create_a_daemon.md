@@ -74,9 +74,9 @@ class MyPeer(LibbyDaemon):
         "alerts.status": lambda payload: print("[X] status:", payload),
     }
 
-    def on_start(self, libby):
+    def on_start(self):
         # Manually teach peers about each other (discovery workaround)
-        libby.learn_peer_keys("peer-Y", ["service1", "service2"])
+        self.libby.learn_peer_keys("peer-Y", ["service1", "service2"])
 
 if __name__ == "__main__":
     MyPeer().serve()
@@ -112,9 +112,9 @@ class MyPeer(LibbyDaemon):
         "alerts.status": lambda payload: print("[X] status:", payload),
     }
 
-    def on_start(self, libby):
+    def on_start(self):
         # Manually teach peers about each other (discovery workaround)
-        libby.learn_peer_keys("peer-Y", ["service1", "service2"])
+        self.libby.learn_peer_keys("peer-Y", ["service1", "service2"])
 
 if __name__ == "__main__":
     MyPeer().serve()
@@ -196,18 +196,18 @@ class PeerA(LibbyDaemon):
     discovery_enabled = True
     discovery_interval_s = 2.0
 
-    def on_start(self, libby):
+    def on_start(self):
         try:
-            if not libby.wait_for_key("peer-B", "perf.echo", timeout_s=2.5):
-                libby.learn_peer_keys("peer-B", ["perf.echo", "ping.txt", "answer"])
+            if not self.libby.wait_for_key("peer-B", "perf.echo", timeout_s=2.5):
+                self.libby.learn_peer_keys("peer-B", ["perf.echo", "ping.txt", "answer"])
         except AttributeError:
             pass
 
         print("[PeerA] asking B: perf.echo …")
-        res = libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=8000)
+        res = self.libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=8000)
         print("[PeerA] result:", res)
 
-        libby.publish("alerts.status", {"source": "peer-A", "ok": True})
+        self.libby.publish("alerts.status", {"source": "peer-A", "ok": True})
         print("[PeerA] published alerts.status")
 
 if __name__ == "__main__":
@@ -253,18 +253,18 @@ class PeerC(LibbyDaemon):
         "math.add":     math_add,
     }
 
-    def on_start(self, libby):
+    def on_start(self):
         # Proxy service needing live libby handle
         def echo_proxy(_p: Dict[str, Any]):
-            res = libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=6000)
+            res = self.libby.rpc("peer-B", "perf.echo", {"t0": time.time()}, ttl_ms=6000)
             return {"ok": True, "forwarded_to": "peer-B", "result": res}
 
         self.add_service("perf.echo.proxy", echo_proxy)
 
         print("[PeerC] math.add(2,5) ->",
-              libby.rpc(self.peer_id, "math.add", {"a": 2, "b": 5}, ttl_ms=2000))
+              self.libby.rpc(self.peer_id, "math.add", {"a": 2, "b": 5}, ttl_ms=2000))
 
-        libby.publish("alerts.status", {"source": "peer-C", "ok": True})
+        self.libby.publish("alerts.status", {"source": "peer-C", "ok": True})
 
 if __name__ == "__main__":
     PeerC().serve()
@@ -312,5 +312,5 @@ class MyPeer(LibbyDaemon):
 - **Encapsulation goal**: application peers only implement business logic (`on_req`, `on_event`) and a few config methods.
 - **Handlers are payload-only.** They receive a Python dict and return anything JSON-serializable.
   If the return is not a dict, LibbyDaemon auto-wraps it as `{"data": <value>}`.
-- **Discovery workaround**: Currently, automatic peer discovery needs manual key learning via `libby.learn_peer_keys()` in `on_start()`.
+- **Discovery workaround**: Currently, automatic peer discovery needs manual key learning via `self.libby.learn_peer_keys()` in `on_start()`.
 
