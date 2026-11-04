@@ -24,7 +24,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # Full history and tags so setuptools-scm can derive the version.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:

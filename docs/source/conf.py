@@ -22,7 +22,7 @@ author = "Prakriti Gupta, Jeb Bailey, Michael Langmayr"
 try:
     release = _pkg_version("libby")
 except PackageNotFoundError:
-    release = "0.1.0"
+    release = "unknown"
 version = release
 
 # -- General configuration ----------------------------------------------------
