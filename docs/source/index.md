@@ -29,6 +29,7 @@ cli
 daemon
 keygrabber
 telemetry
+releasing
 api/index
 ```
 
