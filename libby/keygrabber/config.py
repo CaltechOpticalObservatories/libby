@@ -1,8 +1,8 @@
 """Parse and validate the keygrabber's own configuration sections.
 
 A keygrabber config file is an ordinary ``LibbyDaemon`` config (``peer_id``,
-``group_id``, ``transport``, ...) plus three sections this module owns:
-``sink``, ``defaults`` and ``collections``.
+``group_id``, ``transport``, ...) plus the sections this module owns:
+``sinks``, ``defaults`` and ``collections``.
 """
 from __future__ import annotations
 
@@ -31,6 +31,9 @@ DEFAULT_WORKERS = 4
 TIMEOUT_HEADROOM = 1.5
 
 _COLLECTION_NAME = re.compile(r"^[a-z0-9_]+$")
+
+# Standard OpenTelemetry variables an otlp sink can export to; otel.env sets the first
+_OTLP_ENDPOINT_VARIABLES = ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
 
 
 # A config record, so the field count is the schema rather than complexity
@@ -64,13 +67,18 @@ class KeygrabberConfig:
     """The keygrabber's parsed configuration."""
 
     collections: Tuple[CollectionConfig, ...]
-    sink: Mapping[str, Any]
+    # Sink name to its settings; every sample goes to each of them
+    sinks: Mapping[str, Mapping[str, Any]]
     workers: int
     retry: RetryPolicy
 
 
 def parse_config(config: Mapping[str, Any]) -> KeygrabberConfig:
     """Validate a daemon config's keygrabber sections into typed objects."""
+    if "sink" in config:
+        raise ConfigError(
+            "'sink' is now 'sinks', a map of named sinks, e.g. "
+            "sinks: {influxdb: {type: influxdb, ...}}")
     defaults = _mapping(config, "defaults")
     collections = _mapping(config, "collections")
 
@@ -80,44 +88,60 @@ def parse_config(config: Mapping[str, Any]) -> KeygrabberConfig:
     )
     return KeygrabberConfig(
         collections=parsed,
-        sink=_mapping(config, "sink"),
+        sinks=_parse_sinks(_mapping(config, "sinks")),
         workers=_positive_int(config.get("workers", DEFAULT_WORKERS), "workers"),
         retry=_parse_retry(_mapping(config, "retry")),
     )
 
 
-def build_sink(sink_config: Mapping[str, Any]) -> Sink:
-    """Build the configured sink, importing its backend client on demand."""
+def _parse_sinks(raw: Mapping[str, Any]) -> Mapping[str, Mapping[str, Any]]:
+    if not raw:
+        raise ConfigError("sinks needs at least one sink")
+    for name, settings in raw.items():
+        if not _COLLECTION_NAME.match(str(name)):
+            raise ConfigError(
+                f"sink name {name!r} must be lowercase letters, digits and underscores")
+        if not isinstance(settings, Mapping):
+            raise ConfigError(f"sinks.{name} must be a mapping")
+    return dict(raw)
+
+
+def build_sink(name: str, sink_config: Mapping[str, Any]) -> Sink:
+    """Build the sink named ``name``, importing its backend client on demand."""
+    label = f"sinks.{name}"
     kind = str(sink_config.get("type", "")).strip().lower()
     if not kind:
-        raise ConfigError("sink.type is required")
+        raise ConfigError(f"{label}.type is required")
+    if kind == "otlp":
+        return _build_otlp_sink(label, sink_config)
     if kind != "influxdb":
-        raise ConfigError(f"unsupported sink type {kind!r}; expected 'influxdb'")
+        raise ConfigError(
+            f"unsupported {label}.type {kind!r}; expected 'influxdb' or 'otlp'")
 
     if "token" in sink_config:
         raise ConfigError(
-            "sink.token must not appear in the config; name an environment "
-            "variable with sink.token_env instead"
+            f"{label}.token must not appear in the config; name an environment "
+            f"variable with {label}.token_env instead"
         )
-    token_env = _required(sink_config, "token_env", "sink")
+    token_env = _required(sink_config, "token_env", label)
     token = os.environ.get(str(token_env))
     if not token:
         raise ConfigError(
-            f"environment variable {token_env} is unset or empty, so the "
-            "sink has no token"
+            f"environment variable {token_env} is unset or empty, so {label} "
+            "has no token"
         )
 
     # Validate every field before importing the backend, so a malformed config
     # is reported the same way whether or not the extra is installed
     settings = {
-        "url": str(_required(sink_config, "url", "sink")),
-        "org": str(_required(sink_config, "org", "sink")),
-        "bucket": str(_required(sink_config, "bucket", "sink")),
+        "url": str(_required(sink_config, "url", label)),
+        "org": str(_required(sink_config, "org", label)),
+        "bucket": str(_required(sink_config, "bucket", label)),
         "token": token,
     }
     if "timeout_ms" in sink_config:
         settings["timeout_ms"] = _positive_int(
-            sink_config["timeout_ms"], "sink.timeout_ms")
+            sink_config["timeout_ms"], f"{label}.timeout_ms")
 
     # Deferred: influxdb-client is an optional extra, so a deployment using a
     # different backend never has to install it
@@ -125,6 +149,21 @@ def build_sink(sink_config: Mapping[str, Any]) -> Sink:
         InfluxConfig, InfluxSink,
     )
     return InfluxSink(InfluxConfig(**settings))
+
+
+def _build_otlp_sink(label: str, sink_config: Mapping[str, Any]) -> Sink:
+    if not any(os.environ.get(variable) for variable in _OTLP_ENDPOINT_VARIABLES):
+        raise ConfigError(
+            f"{label} exports to OTEL_EXPORTER_OTLP_ENDPOINT, which is unset; "
+            "set it in otel.env")
+    timeout_s = None
+    if "timeout_s" in sink_config:
+        timeout_s = _positive_float(sink_config["timeout_s"], f"{label}.timeout_s")
+    # Deferred: the OpenTelemetry SDK is the optional otel extra
+    from .otlp import (  # pylint: disable=import-outside-toplevel
+        DEFAULT_TIMEOUT_S as OTLP_TIMEOUT_S, OtlpSink,
+    )
+    return OtlpSink(timeout_s=timeout_s or OTLP_TIMEOUT_S)
 
 
 def _parse_collection(

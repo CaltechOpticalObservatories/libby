@@ -39,12 +39,15 @@ group_id: hispec
 transport: rabbitmq
 rabbitmq_url: amqp://localhost
 
-sink:
-  type: influxdb
-  url: http://influx.hispec:8086
-  org: hispec
-  bucket: telemetry
-  token_env: HISPEC_INFLUX_TOKEN
+sinks:
+  influxdb:
+    type: influxdb
+    url: http://influx.hispec:8086
+    org: hispec
+    bucket: telemetry
+    token_env: HISPEC_INFLUX_TOKEN
+  prometheus:
+    type: otlp
 
 workers: 4
 
@@ -65,13 +68,37 @@ collections:
     exclude: ["units_code"]
 ```
 
-### sink
+### sinks
 
-`type` selects the backend; `influxdb` is the only one implemented.
+A map of named sinks, at least one. Every sample goes to each of them, from a
+single read: adding a sink adds no load on the peers. A sink name must match
+`[a-z0-9_]+`, because it becomes the prefix of that sink's status keywords.
 
-The token is **never** written in the config. `token_env` names an environment
-variable to read it from, and a `token` key in the file is rejected outright.
-`timeout_ms` is optional.
+Each sink has its own writer thread, queue and retry backoff, so one that is
+down or slow fills and drops only its own queue. The others, and the reads,
+carry on.
+
+`type` selects the backend.
+
+**`influxdb`** writes one measurement per keyword, tagged by `group`, `peer` and
+`units`. Its token is **never** written in the config: `token_env` names an
+environment variable to read it from, and a `token` key in the file is rejected
+outright. `timeout_ms` is optional. Needs the `influxdb` extra.
+
+**`otlp`** exports OpenTelemetry gauges to the endpoint in
+`OTEL_EXPORTER_OTLP_ENDPOINT`, for Prometheus behind an OpenTelemetry Collector
+(see {doc}`telemetry`). Every numeric and bool keyword is one metric,
+`libby_keyword`, labelled `group`, `peer`, `keyword` and `units`, and each point
+carries the keyword's read time:
+
+```promql
+libby_keyword{group="hsfei", peer="adc", keyword="positionvalue1"}
+```
+
+Bools are stored as 0 and 1; string and null values are not stored. A batch
+written late, after an outage, still lands at its read time as long as
+Prometheus accepts it, which the backend does for two hours. `timeout_s` is
+optional. Needs the `otel` extra.
 
 ### collections
 
@@ -118,19 +145,24 @@ the ordinary `libby` verbs, and it can feed the same dashboards it fills.
 | Keyword | Type | Access | Meaning |
 |---|---|---|---|
 | `enabled` | bool | R/W | Collect on the configured cadences; false pauses without exiting |
-| `isconnected` | bool | R/W | Last sink write succeeded; write true to request a reconnect |
-| `pointswritten` | int | R | Samples the sink has stored since start |
+| `isconnected` | bool | R/W | Last write to every sink succeeded; write true to request a reconnect of each |
+| `pointswritten` | int | R | Samples stored since start, summed over sinks |
 | `readerrors` | int | R | Keyword reads that failed |
-| `writeerrors` | int | R | Sink writes that failed |
-| `queuedepth` | int | R | Batches waiting in the retry queue |
+| `writeerrors` | int | R | Sink writes that failed, summed over sinks |
+| `queuedepth` | int | R | Batches waiting in retry queues, summed over sinks |
 | `skippedticks` | int | R | Ticks skipped because the previous read was still in flight |
-| `droppedbatches` | int | R | Batches discarded because a queue was full |
+| `droppedbatches` | int | R | Batches discarded because a sink's queue was full, summed over sinks |
 | `reload` | trigger | W | Re-read the config file and apply it |
 | `shutdown` | trigger | W | Gracefully stop the daemon |
 | `<collection>.enabled` | bool | R/W | Collect this one collection |
 | `<collection>.interval` | float | R/W | Cadence in seconds |
 | `<collection>.lastsample` | string | R | UTC time of the last successful tick |
 | `<collection>.lag` | float | R | Seconds the last tick ran past its due time |
+| `<sink>.isconnected` | bool | R/W | Last write to this sink succeeded; write true to reconnect it |
+| `<sink>.pointswritten` | int | R | Samples this sink has stored since start |
+| `<sink>.writeerrors` | int | R | Writes to this sink that failed |
+| `<sink>.queuedepth` | int | R | Batches waiting in this sink's retry queue |
+| `<sink>.droppedbatches` | int | R | Batches discarded because this sink's queue was full |
 
 ```bash
 libby show   hispec.keygrabber.%
@@ -138,19 +170,21 @@ libby modify hispec.keygrabber.adc.interval=30
 libby modify hispec.keygrabber.enabled=false
 ```
 
-Per-collection keywords contain a dot, and `%` matches within a single segment
+Per-collection and per-sink keywords contain a dot, and `%` matches within a single segment
 only, so `libby list hispec.keygrabber.%` will not show `adc.enabled`. Use
 `hispec.keygrabber.%.%` for those.
 
-`isconnected` reports whether the last write to the sink succeeded; it does not
-ping the database, because these getters are answered on the transport's
+`isconnected` reports whether the last write to each sink succeeded; it does not
+ping a database, because these getters are answered on the transport's
 receive thread and a blocking one would time out every read in flight. Writing
 `true` asks the writer thread to reconnect and returns immediately, so poll the
 keyword for the outcome. There is no manual disconnect.
 
-A failing sink is visible from three keywords together: `isconnected` goes
-false, `queuedepth` climbs as batches wait, and `pointswritten` stops moving.
-`writeerrors` counts every failed attempt including retries.
+A failing sink is visible from three keywords together: `<sink>.isconnected`
+goes false, `<sink>.queuedepth` climbs as batches wait, and
+`<sink>.pointswritten` stops moving, while the other sinks' keep moving. The
+unprefixed `isconnected` goes false when any sink fails. `writeerrors` counts
+every failed attempt including retries.
 
 ### reload
 
@@ -161,7 +195,7 @@ to the caller and on `lasterror`.
 
 It will not add or remove collections, and says so rather than half-applying:
 libby has no way to withdraw a keyword, so a new collection's control keywords
-could not appear without a restart. Changing `sink` or `workers` also needs a
+could not appear without a restart. Changing `sinks` or `workers` also needs a
 restart.
 
 ## How it reads

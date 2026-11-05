@@ -21,6 +21,7 @@ def _config(**overrides: Any) -> Dict[str, Any]:
         "peer_id": "keygrabber",
         "group_id": "hispec",
         "defaults": {"interval_s": 10.0, "timeout_s": 2.0, "refresh_s": 300.0},
+        "sinks": {"influxdb": {"type": "influxdb"}},
         "collections": {
             "adc": {"peer": "hsfei.adc", "keywords": ["positionvalue%"]},
         },
@@ -183,13 +184,44 @@ class SelectKeywordsTests(unittest.TestCase):
         self.assertEqual(self._selected(["nosuch%"]), ())
 
 
+class SinksTests(unittest.TestCase):
+    """The named sinks section."""
+
+    def test_every_named_sink_is_kept(self):
+        """Keep each sink's settings under its name."""
+        sinks = {"influxdb": {"type": "influxdb"}, "prometheus": {"type": "otlp"}}
+        self.assertEqual(parse_config(_config(sinks=sinks)).sinks, sinks)
+
+    def test_the_old_single_sink_key_is_refused(self):
+        """Point an old config at the new shape rather than ignoring its sink."""
+        config = _config(sink={"type": "influxdb"})
+        del config["sinks"]
+        with self.assertRaisesRegex(ConfigError, "'sink' is now 'sinks'"):
+            parse_config(config)
+
+    def test_at_least_one_sink_is_required(self):
+        """Refuse a keygrabber that would read keywords and store none."""
+        with self.assertRaisesRegex(ConfigError, "at least one sink"):
+            parse_config(_config(sinks={}))
+
+    def test_sink_names_become_keyword_prefixes(self):
+        """Refuse a name that could not prefix the sink's status keywords."""
+        with self.assertRaisesRegex(ConfigError, "Influx-DB"):
+            parse_config(_config(sinks={"Influx-DB": {"type": "influxdb"}}))
+
+
 class BuildSinkTests(unittest.TestCase):
-    """Sink construction from the config's sink section."""
+    """Sink construction from one named sink's settings."""
+
+    def test_errors_name_the_sink(self):
+        """Say which sink is wrong when there are several."""
+        with self.assertRaisesRegex(ConfigError, "sinks.archive.type"):
+            build_sink("archive", {})
 
     def test_token_in_the_config_is_refused(self):
         """Refuse an inline credential so it cannot reach a config file."""
         with self.assertRaises(ConfigError) as caught:
-            build_sink({"type": "influxdb", "url": "http://x", "org": "o",
+            build_sink("influxdb", {"type": "influxdb", "url": "http://x", "org": "o",
                         "bucket": "b", "token": "secret"})
         self.assertIn("token_env", str(caught.exception))
 
@@ -197,26 +229,26 @@ class BuildSinkTests(unittest.TestCase):
         """Name the missing variable rather than failing at write time."""
         with mock.patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ConfigError) as caught:
-                build_sink({"type": "influxdb", "url": "http://x", "org": "o",
+                build_sink("influxdb", {"type": "influxdb", "url": "http://x", "org": "o",
                             "bucket": "b", "token_env": "NOT_SET_ANYWHERE"})
         self.assertIn("NOT_SET_ANYWHERE", str(caught.exception))
 
     def test_missing_type_is_reported(self):
         """Require an explicit sink type."""
         with self.assertRaises(ConfigError):
-            build_sink({})
+            build_sink("influxdb", {})
 
     def test_unknown_type_is_reported(self):
         """Name the unsupported backend."""
         with self.assertRaises(ConfigError) as caught:
-            build_sink({"type": "sqlite"})
+            build_sink("influxdb", {"type": "sqlite"})
         self.assertIn("sqlite", str(caught.exception))
 
     def test_missing_connection_fields_are_reported(self):
         """Require url, org and bucket before reaching the client."""
         with mock.patch.dict(os.environ, {"TOKEN": "t"}, clear=True):
             with self.assertRaises(ConfigError):
-                build_sink({"type": "influxdb", "token_env": "TOKEN"})
+                build_sink("influxdb", {"type": "influxdb", "token_env": "TOKEN"})
 
 
 if __name__ == "__main__":
