@@ -13,8 +13,11 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .config_resolve import (
     DEFAULT_BIND,
+    DEFAULT_DDS_DOMAIN,
     load_cli_config,
     resolve_address_book,
+    resolve_dds_config,
+    resolve_dds_domain,
     resolve_rabbitmq_url,
     resolve_transport,
 )
@@ -96,6 +99,18 @@ class Client:
         return cls(Libby.rabbitmq(self_id=self_id, rabbitmq_url=rabbitmq_url, keys=[]))
 
     @classmethod
+    def cyclonedds(
+        cls,
+        *,
+        self_id: str = DEFAULT_SELF_ID,
+        domain_id: int = DEFAULT_DDS_DOMAIN,
+        dds_config: Optional[str] = None,
+    ) -> "Client":
+        """Connect over Cyclone DDS; peers are found by discovery."""
+        return cls(Libby.cyclonedds(self_id=self_id, keys=[], domain_id=domain_id,
+                                    dds_config=dds_config))
+
+    @classmethod
     def zmq(
         cls,
         *,
@@ -123,9 +138,14 @@ class Client:
     ) -> "Client":
         """Build a Client from cli_config.yaml, resolving transport as the CLI does."""
         config = load_cli_config(path)
-        if resolve_transport(None, config) == "rabbitmq":
+        transport = resolve_transport(None, config)
+        if transport == "rabbitmq":
             return cls.rabbitmq(self_id=self_id,
                                 rabbitmq_url=resolve_rabbitmq_url(None, config))
+        if transport == "cyclonedds":
+            return cls.cyclonedds(self_id=self_id,
+                                  domain_id=resolve_dds_domain(None, config),
+                                  dds_config=resolve_dds_config(None, config))
         return cls.zmq(self_id=self_id, address_book=resolve_address_book(config))
 
     def show(self, name: str, *, timeout_s: float = DEFAULT_TIMEOUT_S) -> Dict[str, Any]:

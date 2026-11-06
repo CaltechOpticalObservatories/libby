@@ -2,7 +2,7 @@
 
 This guide shows you how to create a peer using the **Libby** and the **`LibbyDaemon`** base class. You'll wire a transport, discovery, RPC handlers, and pub/sub with just a few overrides.
 
-> Libby is transport-agnostic. Examples below show both **ZMQ** (peer-to-peer) and **RabbitMQ** (brokered) transports.
+> Libby is transport-agnostic. Examples below show **ZMQ** (peer-to-peer), **RabbitMQ** (brokered) and **Cyclone DDS** (peer-to-peer with discovery) transports.
 
 ---
 
@@ -33,7 +33,7 @@ sudo systemctl start rabbitmq-server
 ## 1) What `LibbyDaemon` gives you
 
 - **Lifecycle**: easy start/stop, and proper termination handling
-- **Transport**: choose ZMQ (peer-to-peer) or RabbitMQ (brokered) with a single line
+- **Transport**: choose ZMQ (peer-to-peer), RabbitMQ (brokered) or Cyclone DDS (peer-to-peer with discovery) with a single line
 - **Discovery**: optional periodic HELLO
 - **RPC (REQ/RESP)**: register keys and handle requests in one method
 - **Pub/Sub (PUB)**: register event listeners and subscribe to topics
@@ -121,6 +121,26 @@ if __name__ == "__main__":
 ```
 
 **Note:** Currently, you need to manually specify peer keys using `learn_peer_keys()`. Automatic discovery is not yet fully working with either transport.
+
+### Cyclone DDS Transport (peer-to-peer, discovered)
+
+```python
+from libby.daemon import LibbyDaemon
+
+class MyPeer(LibbyDaemon):
+    peer_id = "peer-X"
+    group_id = "workers"
+
+    # Cyclone DDS config; needs the cyclonedds extra
+    transport = "cyclonedds"
+    dds_domain_id = 0       # only peers on the same domain see each other
+    dds_config = None       # Cyclone XML or a path/URI to it; None reads CYCLONEDDS_URI
+
+    # No bind, address_book or broker: DDS discovery finds the peers
+
+if __name__ == "__main__":
+    MyPeer().serve()
+```
 ---
 
 ## 3) A simple peer
@@ -272,7 +292,7 @@ if __name__ == "__main__":
 
 ## 6) Transport Selection
 
-Libby supports two transports that you can switch between with a single line:
+Libby supports three transports that you can switch between with a single line:
 
 ### ZMQ Transport (default)
 - **Peer-to-peer**: Direct socket connections between peers
@@ -287,7 +307,14 @@ Libby supports two transports that you can switch between with a single line:
 - **Best for**: Dynamic scaling, easier deployment, built-in monitoring
 - **Setup**: Install and start RabbitMQ server
 
-**To switch transports**: Just change `transport = "zmq"` to `transport = "rabbitmq"` in your peer class. Everything else stays the same!
+### Cyclone DDS Transport
+- **Peer-to-peer with discovery**: messages go straight between peers, which find each other through DDS discovery
+- **Requires**: the `cyclonedds` extra; optionally `dds_domain_id` and `dds_config`
+- **No address book or broker**: a direct message is routed by its destination's DDS partition
+- **Best for**: many peers and high request rates without a broker in the path
+- **Setup**: `pip install libby[cyclonedds]`; on networks that block multicast, list unicast peers in the Cyclone XML (`dds_config` or `CYCLONEDDS_URI`)
+
+**To switch transports**: Just change `transport = "zmq"` to `transport = "rabbitmq"` or `transport = "cyclonedds"` in your peer class. Everything else stays the same!
 
 ### Group ID (optional)
 
@@ -296,19 +323,20 @@ Optional `group_id` for grouping peers:
 ```python
 class MyPeer(LibbyDaemon):
     peer_id = "worker-1"
-    transport = "zmq"  # or "rabbitmq"
+    transport = "zmq"  # or "rabbitmq" / "cyclonedds"
     group_id = "workers"    # group this peer belongs to
 ```
 
 - **RabbitMQ**: The group ID is included in the queue name (e.g., `libby.group.workers.peer.worker-1`) and enables group-aware features.
 - **ZMQ**: The group ID is stored as metadata and can be used for group-aware routing functions (turn on all devices in a group).
+- **Cyclone DDS**: The group ID is part of the peer's wire id (`workers.worker-1`), which names its DDS partition.
 
 ---
 
 ## 7) Design Notes
 
 - **No retries** (protocol choice): sender waits for ACK and optionally RESP; you can handle retries at the app level if needed.
-- **Transport-agnostic**: Both ZMQ and RabbitMQ implement Bamboo's `Transport` interface. The same peer code works with either transport.
+- **Transport-agnostic**: ZMQ, RabbitMQ and Cyclone DDS implement Bamboo's `Transport` interface (Cyclone DDS with `pack_frames = False`, carrying the envelope as typed DDS fields). The same peer code works with any transport.
 - **Encapsulation goal**: application peers only implement business logic (`on_req`, `on_event`) and a few config methods.
 - **Handlers are payload-only.** They receive a Python dict and return anything JSON-serializable.
   If the return is not a dict, LibbyDaemon auto-wraps it as `{"data": <value>}`.
