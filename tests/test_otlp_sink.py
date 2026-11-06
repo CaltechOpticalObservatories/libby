@@ -154,6 +154,13 @@ class BuildTests(unittest.TestCase):
                              clear=True):
             self.assertIsInstance(build_sink("prometheus", {"type": "otlp"}), OtlpSink)
 
+    def test_an_unknown_key_is_named(self):
+        """Refuse a misspelt timeout rather than exporting with the default."""
+        with mock.patch.dict(os.environ, {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://b:4318"},
+                             clear=True):
+            with self.assertRaisesRegex(ConfigError, "unknown key.*timout_s"):
+                build_sink("prometheus", {"type": "otlp", "timout_s": 30})
+
     def test_a_bad_timeout_names_the_sink(self):
         """Say which sink's timeout is wrong."""
         with mock.patch.dict(os.environ, {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://b:4318"},

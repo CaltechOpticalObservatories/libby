@@ -78,7 +78,8 @@ Each sink has its own writer thread, queue and retry backoff, so one that is
 down or slow fills and drops only its own queue. The others, and the reads,
 carry on.
 
-`type` selects the backend.
+`type` selects the backend, and each type takes only the settings below; any
+other key is refused, so a misspelt one cannot pass unnoticed.
 
 **`influxdb`** writes one measurement per keyword, tagged by `group`, `peer` and
 `units`. Its token is **never** written in the config: `token_env` names an

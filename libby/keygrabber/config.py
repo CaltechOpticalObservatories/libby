@@ -32,6 +32,12 @@ TIMEOUT_HEADROOM = 1.5
 
 _COLLECTION_NAME = re.compile(r"^[a-z0-9_]+$")
 
+# Settings each sink type takes; any other key is most likely a typo
+_SINK_KEYS = {
+    "influxdb": frozenset({"type", "url", "org", "bucket", "token_env", "timeout_ms"}),
+    "otlp": frozenset({"type", "timeout_s"}),
+}
+
 # Standard OpenTelemetry variables an otlp sink can export to; otel.env sets the first
 _OTLP_ENDPOINT_VARIABLES = ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")
 
@@ -112,17 +118,21 @@ def build_sink(name: str, sink_config: Mapping[str, Any]) -> Sink:
     kind = str(sink_config.get("type", "")).strip().lower()
     if not kind:
         raise ConfigError(f"{label}.type is required")
-    if kind == "otlp":
-        return _build_otlp_sink(label, sink_config)
-    if kind != "influxdb":
+    if kind not in _SINK_KEYS:
         raise ConfigError(
             f"unsupported {label}.type {kind!r}; expected 'influxdb' or 'otlp'")
-
-    if "token" in sink_config:
+    if kind == "influxdb" and "token" in sink_config:
         raise ConfigError(
             f"{label}.token must not appear in the config; name an environment "
             f"variable with {label}.token_env instead"
         )
+    unknown = sorted(set(sink_config) - _SINK_KEYS[kind])
+    if unknown:
+        raise ConfigError(f"{label} has unknown key(s) {', '.join(unknown)}; "
+                          f"{kind} takes {', '.join(sorted(_SINK_KEYS[kind]))}")
+    if kind == "otlp":
+        return _build_otlp_sink(label, sink_config)
+
     token_env = _required(sink_config, "token_env", label)
     token = os.environ.get(str(token_env))
     if not token:

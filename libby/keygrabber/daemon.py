@@ -61,12 +61,6 @@ class Counters:  # pylint: disable=too-few-public-methods
             for name, delta in deltas.items():
                 setattr(self, name, getattr(self, name) + delta)
 
-    def set(self, **values: int) -> None:
-        """Set one or more counters to an absolute value."""
-        with self._lock:
-            for name, value in values.items():
-                setattr(self, name, value)
-
 
 # Coordinates config, client, sink, collections and three kinds of thread;
 # the attribute count is collaborators, not state

@@ -213,6 +213,11 @@ class SinksTests(unittest.TestCase):
 class BuildSinkTests(unittest.TestCase):
     """Sink construction from one named sink's settings."""
 
+    def test_an_unknown_key_is_named(self):
+        """Refuse a misspelt setting rather than running on its default."""
+        with self.assertRaisesRegex(ConfigError, "sinks.archive has unknown key.*bukcet"):
+            build_sink("archive", {"type": "influxdb", "bukcet": "b"})
+
     def test_errors_name_the_sink(self):
         """Say which sink is wrong when there are several."""
         with self.assertRaisesRegex(ConfigError, "sinks.archive.type"):
