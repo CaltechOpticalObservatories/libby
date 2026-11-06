@@ -4,6 +4,7 @@ No ``from __future__ import annotations``: cyclonedds resolves IDL field
 types from live annotations.
 """
 import json
+import logging
 import threading
 import time
 from dataclasses import dataclass
@@ -20,6 +21,8 @@ from cyclonedds.topic import Topic
 from cyclonedds.util import duration
 
 from ._transport_errors import describe_exception
+
+logger = logging.getLogger(__name__)
 
 DestStr = str
 SrcStr = str
@@ -136,6 +139,7 @@ class CycloneDdsTransport:  # pylint: disable=too-many-instance-attributes
         self._group_id = group_id
         self._cb: Optional[Callable[[SrcStr, Message], None]] = None
         self._stop = threading.Event()
+        self._closed = False
         self._rx_thread: Optional[threading.Thread] = None
         self._writers: Dict[str, Tuple[DataWriter, threading.Event]] = {}
         self._writers_lock = threading.Lock()
@@ -176,22 +180,34 @@ class CycloneDdsTransport:  # pylint: disable=too-many-instance-attributes
         """Start receiving, then wait (bounded) for discovery to settle.
 
         Returning only once already-running peers are matched means a first
-        broadcast, such as a ``keys.list`` sweep, reaches them.
+        broadcast, such as a ``keys.list`` sweep, reaches them. A stopped
+        transport cannot be restarted; build a new one.
         """
+        if self._closed:
+            raise RuntimeError("CycloneDdsTransport was stopped; create a new transport")
         if self._rx_thread and self._rx_thread.is_alive():
             return
-        self._stop.clear()
         self._rx_thread = threading.Thread(target=self._rx_loop, daemon=True,
                                            name="libby-dds-rx")
         self._rx_thread.start()
         self._settle_discovery()
 
     def stop(self) -> None:
-        """Stop receiving and drop later sends."""
+        """Stop receiving, drop later sends, and leave the DDS domain.
+
+        Deleting the participant deletes its readers and writers too, so
+        other peers stop matching this one.
+        """
+        if self._closed:
+            return
+        self._closed = True
         self._stop.set()
         self._wake.set(True)
         if self._rx_thread:
             self._rx_thread.join(timeout=2.0)
+        # cyclonedds-python has no public close, and `del` would not delete while
+        # child entities hold references; __del__ deletes the entity now
+        self._participant.__del__()  # pylint: disable=unnecessary-dunder-call
 
     def on_receive(self, cb: Callable[[SrcStr, Message], None]) -> None:
         """Register ``cb(source, message)``; ``source`` is ``"peer:<sourceid>"``."""
@@ -204,12 +220,12 @@ class CycloneDdsTransport:  # pylint: disable=too-many-instance-attributes
         """
         if self._stop.is_set():
             return
-        writer = (self._broadcast_writer if dest.startswith("broadcast:")
-                  else self._direct_writer(dest.split(":", 1)[-1]))
         try:
+            writer = (self._broadcast_writer if dest.startswith("broadcast:")
+                      else self._direct_writer(dest.split(":", 1)[-1]))
             writer.write(to_sample(msg))
         except DDSException:
-            pass
+            pass  # includes a send racing stop() as the participant is deleted
 
     def _direct_writer(self, peer_id: str) -> DataWriter:
         """Return the cached writer for a peer, creating it on first use.
@@ -227,10 +243,12 @@ class CycloneDdsTransport:  # pylint: disable=too-many-instance-attributes
                 entry = self._writers[peer_id] = (writer, threading.Event())
         writer, matched = entry
         if created:
-            deadline = time.monotonic() + MATCH_TIMEOUT_S
-            while not _matched_readers(writer) and time.monotonic() < deadline:
-                time.sleep(POLL_S)
-            matched.set()
+            try:
+                deadline = time.monotonic() + MATCH_TIMEOUT_S
+                while not _matched_readers(writer) and time.monotonic() < deadline:
+                    time.sleep(POLL_S)
+            finally:
+                matched.set()
         else:
             matched.wait(MATCH_TIMEOUT_S)
         return writer
@@ -260,4 +278,9 @@ class CycloneDdsTransport:  # pylint: disable=too-many-instance-attributes
                         message = to_message(sample)
                     except ValueError:
                         continue  # malformed payload or type, dropped like any undeliverable frame
-                    self._cb(f"peer:{message.env.sourceid}", message)
+                    try:
+                        self._cb(f"peer:{message.env.sourceid}", message)
+                    except Exception:  # pylint: disable=broad-exception-caught
+                        # One bad message must not stop this peer receiving
+                        logger.exception("receive callback failed for a message from %s",
+                                         message.env.sourceid)

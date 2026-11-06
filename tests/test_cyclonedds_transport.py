@@ -8,13 +8,15 @@ from __future__ import annotations
 import dataclasses
 import queue
 import random
+import time
 import unittest
 from typing import List, Tuple
 
 from bamboo import Envelope, Message, MessageBuilder
 
 try:
-    from libby.cyclonedds_transport import CycloneDdsTransport, DdsEnvelope, to_message, to_sample
+    from libby.cyclonedds_transport import (CycloneDdsTransport, DdsEnvelope, _matched_readers,
+                                            to_message, to_sample)
 except ImportError:  # cyclonedds is an optional extra
     CycloneDdsTransport = None
 
@@ -111,6 +113,40 @@ class DeliveryTests(unittest.TestCase):
         for peer_id in self.transports:
             self.assertEqual(self._received(peer_id, DELIVERY_TIMEOUT_S),
                              [("peer:hsfei.client", msg)], peer_id)
+
+    def test_stop_leaves_the_domain(self):
+        """Stop being matched by other peers once stopped."""
+        # Matching is only observable on the transport's own writer
+        writer = self.transports["hsfei.pickoff"]._broadcast_writer  # pylint: disable=protected-access
+        before = _matched_readers(writer)
+        self.transports["hsfei.client"].stop()
+        deadline = time.monotonic() + DELIVERY_TIMEOUT_S
+        while _matched_readers(writer) == before and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(_matched_readers(writer), before - 1)
+
+    def test_start_after_stop_is_refused(self):
+        """Refuse to restart a transport whose participant is gone."""
+        self.transports["hsfei.client"].stop()
+        with self.assertRaises(RuntimeError):
+            self.transports["hsfei.client"].start()
+
+    def test_failing_callback_does_not_stop_receiving(self):
+        """Keep receiving after the callback raises for one message."""
+        received: List[Message] = []
+
+        def fail_once(_source: str, msg: Message) -> None:
+            if not received:
+                received.append(msg)
+                raise ValueError("handler bug")
+            self.inboxes["hsfei.adc"].put(("", msg))
+
+        self.transports["hsfei.adc"].on_receive(fail_once)
+        with self.assertLogs("libby.cyclonedds_transport", "ERROR"):
+            for _ in range(2):
+                self.transports["hsfei.client"].send(
+                    "peer:hsfei.adc", _request("hsfei.client", "hsfei.adc"))
+            self.assertEqual(len(self._received("hsfei.adc", DELIVERY_TIMEOUT_S)), 1)
 
     def test_send_after_stop_is_dropped(self):
         """Drop a late send rather than raising or delivering it."""
