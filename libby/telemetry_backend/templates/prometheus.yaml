@@ -1,0 +1,10 @@
+# Rendered from libby's telemetry backend; edits here are lost on the next install.
+
+storage:
+  tsdb:
+    # Accept late samples, e.g. a batch resent after an outage
+    out_of_order_time_window: 2h
+otlp:
+  promote_resource_attributes:
+    - service.namespace
+    - host.name

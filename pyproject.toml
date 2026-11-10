@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "libby"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Libby: a tiny messaging library which uses bamboo with a ZMQ transport"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -26,6 +26,11 @@ dependencies = [
 influxdb = [
   "influxdb-client>=1.40",
 ]
+otel = [
+  "opentelemetry-api>=1.27",
+  "opentelemetry-sdk>=1.27",
+  "opentelemetry-exporter-otlp-proto-http>=1.27",
+]
 docs = [
   "sphinx>=7.2",
   "shibuya>=2024.1.21",
@@ -38,6 +43,15 @@ Homepage = "https://caltechopticalobservatories.github.io/libby/"
 Repository = "https://github.com/CaltechOpticalObservatories/libby"
 "Bug Tracker" = "https://github.com/CaltechOpticalObservatories/libby/issues"
 
+# The version comes from the most recent libby-X.Y.Z git tag (see
+# docs/source/releasing.md); untagged commits get X.Y.(Z+1).devN+g<sha>.
+[tool.setuptools_scm]
+tag_regex = "^libby-(?P<version>\\d+\\.\\d+\\.\\d+.*)$"
+fallback_version = "0.0.0+unknown"
+
+[tool.setuptools_scm.scm.git]
+describe_command = "git describe --dirty --tags --long --match 'libby-*'"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["libby", "libby.*"]
@@ -45,6 +59,7 @@ exclude = ["peers*", "package*"]
 
 [tool.setuptools.package-data]
 "libby.cli" = ["*.yaml"]
+"libby.telemetry_backend" = ["templates/*"]
 
 [project.scripts]
 libby = "libby.cli.libby_cli:main"

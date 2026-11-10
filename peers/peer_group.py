@@ -20,7 +20,7 @@ class GroupTestPeer(LibbyDaemon):
         "echo": handle_echo,
     }
 
-    def on_start(self, libby):
+    def on_start(self):
         print(f"[GroupTestPeer] Started with group_id='{self.group_id}'")
         print(f"[GroupTestPeer] Expected queue name: libby.group.{self.group_id}.peer.{self.peer_id}")
 

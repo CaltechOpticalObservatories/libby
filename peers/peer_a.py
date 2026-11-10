@@ -17,20 +17,20 @@ class PeerA(LibbyDaemon):
     discovery_enabled = True
     discovery_interval_s = 2.0
 
-    def on_start(self, libby):
+    def on_start(self):
         try:
-            if not libby.wait_for_key(
+            if not self.libby.wait_for_key(
                 "peer-B",
                 "perf.echo",
                 timeout_s=2.5,
             ):
-                libby.learn_peer_keys(
+                self.libby.learn_peer_keys(
                     "peer-B",
                     ["perf.echo", "ping.txt", "answer"],
                 )
 
             print("[PeerA] asking B: perf.echo ...")
-            result = libby.rpc(
+            result = self.libby.rpc(
                 "peer-B",
                 "perf.echo",
                 {"t0": time.time()},
@@ -41,7 +41,7 @@ class PeerA(LibbyDaemon):
         except Exception as exc:
             print(f"[PeerA] Peer B request failed: {exc}")
 
-        libby.publish(
+        self.libby.publish(
             "alerts.status",
             {
                 "source": self.peer_id,

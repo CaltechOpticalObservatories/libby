@@ -63,6 +63,10 @@ def _chunked(items: Sequence[str], size: int) -> Iterator[Sequence[str]]:
 class KeyListing:
     """One peer's answer to a ``keys.list`` request.
 
+    ``writeonly`` names those of ``names`` that have no value to read, so a
+    caller polling the peer can skip them. It is bare keyword names, matching
+    ``matches`` on the wire rather than the qualified ``names`` above.
+
     ``services`` lists the non-keyword keys the peer answers, such as
     ``keys.read``. It is empty for a peer on a libby old enough not to report
     the field, which is how a caller decides whether bulk reads are available:
@@ -71,6 +75,7 @@ class KeyListing:
     """
 
     names: Tuple[str, ...]
+    writeonly: Tuple[str, ...]
     services: Tuple[str, ...]
 
 
@@ -157,6 +162,7 @@ class Client:
         return KeyListing(
             names=tuple(f"{group}.{daemon}.{match}"
                         for match in response.get("matches", [])),
+            writeonly=tuple(response.get("writeonly", [])),
             services=tuple(response.get("services", [])),
         )
 

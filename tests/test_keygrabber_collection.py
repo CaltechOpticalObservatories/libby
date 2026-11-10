@@ -44,11 +44,13 @@ class _FakeClient:
         self,
         names: Sequence[str] = ("positionvalue", "isconnected"),
         services: Sequence[str] = ("keys.read",),
+        writeonly: Sequence[str] = (),
         values: Optional[Dict[str, Dict[str, Any]]] = None,
         timeouts_after: Optional[int] = None,
     ) -> None:
         self.names = list(names)
         self.services = list(services)
+        self.writeonly = list(writeonly)
         self.values = values or {}
         self.timeouts_after = timeouts_after
         self.read_calls: List[Tuple[str, ...]] = []
@@ -61,6 +63,7 @@ class _FakeClient:
         prefix = pattern.rsplit(".", 1)[0]
         return KeyListing(
             names=tuple(f"{prefix}.{name}" for name in self.names),
+            writeonly=tuple(self.writeonly),
             services=tuple(self.services),
         )
 
@@ -208,6 +211,29 @@ class TickTests(unittest.TestCase):
         self.assertEqual(len(client.show_calls), 2)   # one ok, one timeout
         self.assertEqual(result.read_errors, 4 - 1)
         self.assertEqual(len(result.samples), 1)
+
+    def test_write_only_keywords_are_never_read(self):
+        """A trigger answers a show with `false`, which is not a measurement.
+
+        Archiving it would record `shutdown` as a datapoint on every peer at
+        every interval, forever.
+        """
+        client = _FakeClient(names=("pressure", "shutdown", "units_code"),
+                             writeonly=("shutdown", "units_code"),
+                             values={"pressure": {"ok": True, "value": 1.0}})
+        collection = Collection(_collection_config())
+
+        self.assertEqual(collection.resolve(client), ("pressure",))
+        result = collection.tick(client, TIMESTAMP)
+        self.assertEqual(client.read_calls, [("hsfei.adc.pressure",)])
+        self.assertEqual(result.read_errors, 0)
+        self.assertEqual([s.keyword for s in result.samples], ["pressure"])
+
+    def test_a_peer_reporting_none_is_read_as_before(self):
+        """An older libby omits the field, so nothing is filtered."""
+        client = _FakeClient(names=("pressure", "shutdown"), writeonly=())
+        self.assertEqual(Collection(_collection_config()).resolve(client),
+                         ("pressure", "shutdown"))
 
 
 if __name__ == "__main__":

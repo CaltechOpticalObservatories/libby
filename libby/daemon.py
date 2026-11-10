@@ -9,9 +9,11 @@ import time
 from dataclasses import asdict, is_dataclass
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Type, TypeVar
 
+from . import telemetry
 from .config import ConfigError, DaemonConfigLoader, with_env_overrides
 from .keyword import Keyword
 from .libby import Libby
+from .naming import qualified_peer_id
 
 
 Payload = Dict[str, Any]
@@ -19,8 +21,10 @@ RPCHandler = Callable[[Payload], Any]
 EvtHandler = Callable[[Payload], None]
 DaemonT = TypeVar("DaemonT", bound="LibbyDaemon")
 
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-class _LastErrorHandler(logging.Handler):
+
+class _LastErrorHandler(logging.Filter):
     """Captures a daemon's most recent ERROR+ log record.
 
     A daemon that only logs a failure locally (self.logger.error(...)) leaves
@@ -31,14 +35,17 @@ class _LastErrorHandler(logging.Handler):
     """
 
     def __init__(self, daemon: "LibbyDaemon") -> None:
-        super().__init__(level=logging.ERROR)
+        super().__init__()
         self._daemon = daemon
+        self._formatter = logging.Formatter()
 
-    def emit(self, record: logging.LogRecord) -> None:
-        try:
-            self._daemon._last_error = self.format(record)
-        except Exception:
-            pass
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.ERROR:
+            try:
+                self._daemon._last_error = self._formatter.format(record)
+            except Exception:
+                pass
+        return True
 
 
 class LibbyDaemon:
@@ -222,43 +229,39 @@ class LibbyDaemon:
 
         handler.setLevel(level)
         handler.setFormatter(
-            logging.Formatter(
-                str(
-                    raw.get(
-                        "format",
-                        "%(asctime)s - %(name)s - "
-                        "%(levelname)s - %(message)s",
-                    )
-                )
-            )
+            telemetry.TraceContextFormatter(str(raw.get("format", DEFAULT_LOG_FORMAT)))
         )
         setattr(handler, "_libby_daemon_handler", True)
         self.logger.addHandler(handler)
 
     def _ensure_last_error_handler(self) -> None:
-        """Attach the lasterror-tracking handler to self.logger (idempotent).
+        """Attach the lasterror-tracking filter to self.logger (idempotent).
 
         Called from both __init__ (covers daemons built directly, e.g. in
         tests or examples) and _setup_logging (which may point self.logger
         at a different, peer_id-named Logger once config is loaded).
         """
-        if any(getattr(handler, "_libby_lasterror_handler", False)
-               for handler in self.logger.handlers):
+        if any(getattr(log_filter, "_libby_lasterror_handler", False)
+               for log_filter in self.logger.filters):
             return
-        handler = _LastErrorHandler(self)
-        setattr(handler, "_libby_lasterror_handler", True)
-        self.logger.addHandler(handler)
+        log_filter = _LastErrorHandler(self)
+        setattr(log_filter, "_libby_lasterror_handler", True)
+        self.logger.addFilter(log_filter)
 
     ### Optional hooks
 
-    def on_start(self, libby: Libby) -> None:
-        """Initialize hardware and register keywords."""
+    def on_start(self) -> None:
+        """Initialize hardware and register keywords. ``self.libby`` is set."""
 
-    def on_stop(self, libby: Optional[Libby] = None) -> None:
-        """Release hardware resources."""
+    def on_stop(self) -> None:
+        """Release hardware resources.
 
-    def on_hello(self, libby: Libby) -> None:
-        """Run after the initial discovery hello."""
+        Also runs after a start that failed partway, so ``self.libby`` may be
+        None; it is closed only after this returns.
+        """
+
+    def on_hello(self) -> None:
+        """Run after the initial discovery hello. ``self.libby`` is set."""
 
     def on_event(self, topic: str, msg: Any) -> None:
         self.logger.info("%s: %s", topic, msg.env.payload)
@@ -392,6 +395,10 @@ class LibbyDaemon:
         self._stop_event.clear()
         self._start_time = time.monotonic()
         try:
+            telemetry.configure(
+                qualified_peer_id(self.config_peer_id(), self.config_group_id()),
+                self.config_group_id(),
+            )
             self.libby = self.build_libby()
             self._register_services(self.services)
             self._register_topics(self.topics)
@@ -415,12 +422,12 @@ class LibbyDaemon:
             if self.config_discovery_enabled():
                 try:
                     self.libby.hello()
-                    self.on_hello(self.libby)
+                    self.on_hello()
                 except Exception:
                     self.logger.exception("discovery hello failed")
 
             try:
-                self.on_start(self.libby)
+                self.on_start()
             except Exception:
                 self.logger.exception("daemon initialization failed")
                 if self.fail_fast_on_start:
@@ -451,7 +458,7 @@ class LibbyDaemon:
             return
 
         try:
-            self.on_stop(self.libby)
+            self.on_stop()
         except Exception:
             self.logger.exception("daemon shutdown hook failed")
         finally:
@@ -459,6 +466,7 @@ class LibbyDaemon:
             self._started = False
             self._stop_event.set()
             self.logger.info("stopped")
+            telemetry.flush()
 
     def serve(self) -> None:
         """Start the daemon and block until a signal or stop request."""

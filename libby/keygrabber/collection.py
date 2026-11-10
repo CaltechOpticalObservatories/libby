@@ -109,14 +109,18 @@ class Collection:  # pylint: disable=too-many-instance-attributes
     def resolve(self, client: Client) -> Tuple[str, ...]:
         """Ask the peer what it serves and select the configured keywords.
 
-        One ``keys.list`` covers both: the peer's keyword names, and whether it
-        serves ``keys.read``. Selection is then local, so a collection with
-        several patterns still costs one request.
+        One ``keys.list`` covers all of it: the peer's keyword names, which of
+        them cannot be read, and whether it serves ``keys.read``. Selection is
+        then local, so a collection with several patterns still costs one
+        request.
         """
         listing = client.listing(f"{self.config.peer}.%",
                                  timeout_s=self.config.timeout_s)
-        available = [name.rsplit(".", 1)[-1] for name in listing.names]
-        self._names = select_keywords(self.config, available)
+        # A trigger answers a show with `false`, and a setter-only keyword with
+        # an error, so neither is worth asking for on every tick
+        readable = [name.rsplit(".", 1)[-1] for name in listing.names
+                    if name.rsplit(".", 1)[-1] not in listing.writeonly]
+        self._names = select_keywords(self.config, readable)
         self._bulk_read = BULK_READ_SERVICE in listing.services
         self._resolved_at = self._clock()
         return self._names
