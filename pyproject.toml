@@ -64,3 +64,4 @@ exclude = ["peers*", "package*"]
 [project.scripts]
 libby = "libby.cli.libby_cli:main"
 keygrabber = "libby.keygrabber.main:main"
+keyheader = "libby.keyheader.main:main"
