@@ -19,7 +19,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     """Run keyheader until it is stopped. Return an exit code."""
     parser = argparse.ArgumentParser(
         prog="keyheader",
-        description="Answer FITS header segments from stored keyword values",
+        description="Answer FITS header segment requests from stored keyword values",
     )
     parser.add_argument("-c", "--config", required=True,
                         help="path to the keyheader config (YAML or JSON)")

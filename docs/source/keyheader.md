@@ -121,10 +121,11 @@ Config load rejects:
   (`SIMPLE`, `NAXISn`, `END`, ...), commentary (`COMMENT`, `HISTORY`,
   `CONTINUE`), the general descriptive ones (`OBJECT`, `TELESCOP`, `DATE`,
   ...), and the WCS and time keywords. Keyheader writes COMMENT itself.
-- a FITS keyword used twice, either within one segment or across segments.
-  The requesting daemon merges segments into one header, and FITS forbids a
-  repeated keyword, so the error names both segments rather than renaming
-  either.
+- a FITS keyword used twice within one segment. Different segments may use
+  the same keywords, so several camera daemons can each have their own
+  segments with the same names. A daemon that adds two segments to one header
+  must pick segments that do not overlap, since FITS forbids a repeated
+  keyword.
 - a repeated segment name
 - `interpolate` on a `bool` or `str` card
 - a `format` the type cannot take, or a numeric format whose output does not
@@ -198,8 +199,9 @@ Use `end=True`, or build a fresh `fits.Header(cards)`. Plain
 cards, which moves the segment's COMMENT below the cards it introduces.
 
 The requesting daemon is still responsible for checking the final header
-against the FITS standard. For example, it should not add a second segment
-that names the same keywords.
+against the FITS standard. Keyheader only checks keywords within a segment,
+so a daemon that adds more than one segment to a header must make sure they
+use different keywords, or replace a card rather than appending a duplicate.
 
 ### Values and formats
 

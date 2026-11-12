@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Set, Tuple
 
 from ..config import ConfigError
 # The keygrabber's validators, so both daemons phrase config errors alike
@@ -271,11 +271,12 @@ def _parse_card(label: str, raw: Any, defaults: Mapping[str, Any]) -> CardConfig
 
 
 def _check_unique(segments: Sequence[SegmentConfig]) -> None:
-    """Reject a repeated segment name, or a FITS keyword used twice anywhere.
+    """Reject a repeated segment name, or a FITS keyword used twice in a segment.
 
-    Keywords are unique across every segment, not just within one, because the
-    requesting daemon merges segments into one header and FITS forbids a
-    repeated keyword.
+    Keywords need only be unique within a segment. Several camera daemons can
+    each have their own segment using the same keywords, so two segments may
+    share a name; a daemon that adds two segments to one header must choose
+    segments that do not overlap.
     """
     seen_segments: Dict[str, int] = {}
     for index, segment in enumerate(segments):
@@ -286,19 +287,16 @@ def _check_unique(segments: Sequence[SegmentConfig]) -> None:
                 f"segments[{index}])")
         seen_segments[segment.name] = index
 
-    owners: Dict[str, str] = {}
     for segment in segments:
+        seen: Set[str] = set()
         names = [card.fits for card in segment.cards]
         if segment.date_keyword is not None:
             names.insert(0, segment.date_keyword)
         for name in names:
-            if name in owners:
-                where = ("twice in segment " + repr(segment.name)
-                         if owners[name] == segment.name
-                         else f"in segments {owners[name]!r} and "
-                              f"{segment.name!r}")
-                raise ConfigError(f"FITS keyword {name} appears {where}")
-            owners[name] = segment.name
+            if name in seen:
+                raise ConfigError(f"FITS keyword {name} appears twice in "
+                                  f"segment {segment.name!r}")
+            seen.add(name)
 
 
 def _parse_source_name(label: str, raw: Any) -> Tuple[str, str, str]:

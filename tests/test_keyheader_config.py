@@ -121,20 +121,19 @@ class UniquenessTests(unittest.TestCase):
                                     "ADCPOS1 appears twice in segment"):
             parse_config(_with_card(fits="ADCPOS1"))
 
-    def test_duplicate_across_segments(self):
-        """Reject a keyword two segments share, since they merge into one header."""
+    def test_same_keyword_in_different_segments(self):
+        """Allow segments to share keywords, e.g. one segment per camera."""
         config = _config()
         config["segments"][1]["cards"][0]["fits"] = "ADCPOS1"
-        with self.assertRaisesRegex(ConfigError,
-                                    "'EXP-BEGIN' and 'EXP-END'"):
-            parse_config(config)
+        settings = parse_config(config)
+        self.assertEqual(settings.segments[1].cards[0].fits, "ADCPOS1")
 
-    def test_date_keyword_counts_toward_uniqueness(self):
-        """Reject two segments that both claim DATE-BEG."""
+    def test_same_date_keyword_in_different_segments(self):
+        """Allow two cameras' segments to both write DATE-BEG."""
         config = _config()
         config["segments"][1]["date_keyword"] = "DATE-BEG"
-        with self.assertRaisesRegex(ConfigError, "DATE-BEG appears"):
-            parse_config(config)
+        self.assertEqual(parse_config(config).segments[1].date_keyword,
+                         "DATE-BEG")
 
     def test_duplicate_segment_name(self):
         """Reject two segments with the same name."""

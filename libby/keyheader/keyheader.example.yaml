@@ -34,8 +34,10 @@ defaults:
 
 # A list, not a mapping: YAML silently keeps only the last of two identical
 # keys, which would hide a duplicate. Segment names are what a requesting
-# daemon asks for, and FITS keywords must be unique across ALL segments,
-# because the requesting daemon merges them into one header.
+# daemon asks for. FITS keywords must be unique within a segment, but
+# different segments may reuse them, e.g. one set of segments per camera.
+# EXP-BEGIN and EXP-END below use distinct names because one camera adds
+# both to the same header.
 #
 # Each card is written on one line in YAML flow style. Inside { } the
 # characters [ ] { } , and ": " have meaning, so quote any value that holds

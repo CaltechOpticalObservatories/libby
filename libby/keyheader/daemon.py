@@ -1,10 +1,11 @@
-"""The keyheader daemon: answer a named segment at a moment with FITS cards."""
+"""The keyheader daemon: answer a named segment request at a moment with FITS cards."""
 from __future__ import annotations
 
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, List, Mapping, Optional
+from typing import Any, List, Mapping, Optional, cast
 
 from ..config import ConfigError, DaemonConfigLoader, with_env_overrides
 from ..daemon import LibbyDaemon
@@ -15,6 +16,15 @@ from .config import CardConfig, KeyheaderConfig, build_source, parse_config
 from .source import Source, SourceError
 
 SERVICE_KEY = "keyheader.segment"
+
+
+@dataclass(frozen=True)
+class ConfigFile:
+    """Where a daemon's config came from, so ``reload`` can re-read it."""
+
+    path: str
+    daemon_id: Optional[str] = None
+    env_prefix: Optional[str] = None
 
 
 class Counters:  # pylint: disable=too-few-public-methods
@@ -54,9 +64,8 @@ class KeyheaderDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attribu
         self._source: Optional[Source] = None
         self._pool: Optional[ThreadPoolExecutor] = None
         self._source_healthy = True
-        self._config_path: Optional[str] = None
-        self._daemon_id: Optional[str] = None
-        self._env_prefix: Optional[str] = None
+        # Set by from_config_file; None for a daemon built from a mapping
+        self.config_file: Optional[ConfigFile] = None
 
     def on_start(self) -> None:
         """Parse config, open the source, and start answering requests."""
@@ -83,18 +92,22 @@ class KeyheaderDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attribu
         exercise :meth:`segment` without a transport or a database.
         """
         self._settings = settings
-        self._source = source if source is not None else self.make_source()
-        self._source.connect()
+        if source is None:
+            source = self.make_source()
+        # Held before connecting, so on_stop still closes it if connect fails
+        self._source = source
+        source.connect()
         self._pool = ThreadPoolExecutor(max_workers=settings.workers,
                                         thread_name_prefix="keyheader-read")
 
     @classmethod
     def from_config_file(cls, path, daemon_id=None, *, env_prefix=None):
         """Build from a file, remembering where it came from for ``reload``."""
-        daemon = super().from_config_file(path, daemon_id, env_prefix=env_prefix)
-        daemon._config_path = str(path)
-        daemon._daemon_id = daemon_id
-        daemon._env_prefix = env_prefix
+        # The base returns an instance of cls, but type checkers resolve the
+        # super() call to LibbyDaemon, which lacks these attributes
+        daemon = cast("KeyheaderDaemon", super().from_config_file(
+            path, daemon_id, env_prefix=env_prefix))
+        daemon.config_file = ConfigFile(str(path), daemon_id, env_prefix)
         return daemon
 
     def make_source(self) -> Source:
@@ -193,12 +206,13 @@ class KeyheaderDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attribu
         A change to ``source`` or ``workers`` does, and is refused rather than
         half-applied. A request in flight keeps the settings it started with.
         """
-        if self._config_path is None:
+        origin = self.config_file
+        if origin is None:
             raise LibbyError("this keyheader was not built from a config file")
-        config = DaemonConfigLoader(self._config_path).get_daemon_config(
-            self._daemon_id)
-        if self._env_prefix:
-            config = with_env_overrides(config, prefix=self._env_prefix)
+        config = DaemonConfigLoader(origin.path).get_daemon_config(
+            origin.daemon_id)
+        if origin.env_prefix:
+            config = with_env_overrides(config, prefix=origin.env_prefix)
         settings = parse_config(config)
         running = self._require()
         if (dict(settings.source) != dict(running.source)
@@ -207,7 +221,7 @@ class KeyheaderDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attribu
                               "restart instead")
         self._settings = settings
         self.logger.info("reloaded %d segments from %s",
-                         len(settings.segments), self._config_path)
+                         len(settings.segments), origin.path)
 
     def _require(self) -> KeyheaderConfig:
         if self._settings is None:
