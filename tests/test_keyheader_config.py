@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import os
+from pathlib import Path
 import unittest
 from typing import Any, Dict
 from unittest import mock
@@ -245,6 +246,24 @@ class CardValidationTests(unittest.TestCase):
             parse_config(_config(segments=[]))
         with self.assertRaisesRegex(ConfigError, "non-empty"):
             parse_config(_config(segments=[{"name": "S", "cards": []}]))
+
+
+class ExampleConfigTests(unittest.TestCase):
+    """The shipped example stays valid as the rules change."""
+
+    def test_example_parses(self):
+        """Parse keyheader.example.yaml and check its source section."""
+        path = Path(__file__).parent.parent / "libby" / "keyheader" / \
+            "keyheader.example.yaml"
+        with path.open(encoding="utf-8") as handle:
+            settings = parse_config(yaml.safe_load(handle))
+        self.assertEqual([s.name for s in settings.segments],
+                         ["EXP-BEGIN", "EXP-END"])
+        with mock.patch.dict(os.environ, {"HISPEC_INFLUX_TOKEN": "t"}):
+            try:
+                build_source(settings.source)
+            except ImportError:
+                self.skipTest("influxdb extra not installed")
 
 
 class BuildSourceTests(unittest.TestCase):

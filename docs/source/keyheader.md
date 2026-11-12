@@ -26,7 +26,8 @@ Like the keygrabber, it is an ordinary `LibbyDaemon`: `SIGTERM` or the
 ## Config
 
 A keyheader config is an ordinary daemon config plus `source`, `defaults` and
-`segments`.
+`segments`. A fuller, commented example ships with the package as
+`libby/keyheader/keyheader.example.yaml`.
 
 ```yaml
 peer_id: keyheader
