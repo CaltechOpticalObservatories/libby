@@ -52,28 +52,22 @@ segments:
   - name: EXP-BEGIN
     date_keyword: DATE-BEG
     cards:
-      - fits: ADCPOS1
-        keyword: hsfei.adc.positionvalue1
-        type: float
-        format: ".3f"
-        comment: "ADC prism 1 position [deg]"
-        mode: interpolate
-      - fits: ADCMOVE
-        keyword: hsfei.adc.ismoving
-        type: bool
-        comment: "ADC in motion"
+      - {fits: ADCPOS1, keyword: hsfei.adc.positionvalue1, type: float, format: ".3f", comment: "ADC prism 1 position [deg]", mode: interpolate}
+      - {fits: ADCMOVE, keyword: hsfei.adc.ismoving, type: bool, comment: "ADC in motion"}
 
   - name: EXP-END
     date_keyword: DATE-END
     defaults:
       mode: prior
     cards:
-      - fits: ADCPOS1E
-        keyword: hsfei.adc.positionvalue1
-        type: float
-        format: ".3f"
-        comment: "ADC prism 1 position at end [deg]"
+      - {fits: ADCPOS1E, keyword: hsfei.adc.positionvalue1, type: float, format: ".3f", comment: "ADC prism 1 position at end [deg]"}
 ```
+
+Each card is one line in YAML flow style, `{key: value, ...}`. Block style
+works too, and the two can be mixed. Inside `{ }` the characters `[ ] { } ,`
+and `: ` have meaning, so quote any value that contains them. An unquoted
+comment such as `ADC position [deg]` is a parse error, which is why the
+comments above are always quoted.
 
 ### source
 
