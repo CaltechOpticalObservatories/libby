@@ -59,8 +59,10 @@ exclude = ["peers*", "package*"]
 
 [tool.setuptools.package-data]
 "libby.cli" = ["*.yaml"]
+"libby.keyheader" = ["*.yaml"]
 "libby.telemetry_backend" = ["templates/*"]
 
 [project.scripts]
 libby = "libby.cli.libby_cli:main"
 keygrabber = "libby.keygrabber.main:main"
+keyheader = "libby.keyheader.main:main"
