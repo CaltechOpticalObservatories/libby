@@ -2,15 +2,19 @@
 
 Every case runs once per transport, so a change that only holds over RabbitMQ
 fails here. The ZMQ cases need no external service and always run; the RabbitMQ
-cases skip unless a broker is reachable at ``amqp://localhost``.
+cases skip unless a broker is reachable at ``amqp://localhost``; the Cyclone DDS
+cases skip unless cyclonedds is installed, and use a random DDS domain so
+concurrent runs cannot hear each other.
 
-There are no sleeps or readiness polls anywhere below, deliberately. Both
+There are no sleeps or readiness polls anywhere below, deliberately. All
 transports block in ``start()`` until they can be talked to, and
 ``test_first_read_needs_no_warmup`` asserts exactly that, so a regression in
 the barrier fails loudly instead of being absorbed by a retry.
 """
 from __future__ import annotations
 
+import importlib.util
+import random
 import socket
 import threading
 import unittest
@@ -28,6 +32,8 @@ RPC_TIMEOUT_S = 6.0
 LISTING_TIMEOUT_S = 2.0
 SERVE_STOP_TIMEOUT_S = 10.0
 INITIAL_POSITION = 10.0
+DDS_AVAILABLE = importlib.util.find_spec("cyclonedds") is not None
+DDS_DOMAIN_ID = random.randint(1, 230)
 
 
 def _broker_available() -> bool:
@@ -108,6 +114,22 @@ class _ZmqLifecycleDaemon(_LifecycleDaemon):
 
     peer_id = "lifecycletestzmq"
     transport = "zmq"
+
+
+class _DdsFixtureDaemon(_FixtureDaemon):
+    """Fixture daemon served over Cyclone DDS."""
+
+    peer_id = "pickofftestdds"
+    transport = "cyclonedds"
+    dds_domain_id = DDS_DOMAIN_ID
+
+
+class _DdsLifecycleDaemon(_LifecycleDaemon):
+    """Lifecycle daemon served over Cyclone DDS."""
+
+    peer_id = "lifecycletestdds"
+    transport = "cyclonedds"
+    dds_domain_id = DDS_DOMAIN_ID
 
 
 def _started_daemon(
@@ -458,6 +480,60 @@ class ZmqLifecycleTests(_Bases.LifecycleCases):
         peer = f"{GROUP_ID}.{_ZmqLifecycleDaemon.peer_id}"
         client = Client.zmq(bind=_free_endpoint(), address_book={peer: endpoint})
         return daemon, client, peer
+
+
+@unittest.skipUnless(DDS_AVAILABLE, "cyclonedds not installed")
+class CycloneDdsClientTests(_Bases.ClientCases):
+    """Client cases over Cyclone DDS."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.daemon = _DdsFixtureDaemon()
+        cls.daemon.start()
+        cls.peer = f"{GROUP_ID}.{_DdsFixtureDaemon.peer_id}"
+        cls.client = Client.cyclonedds(domain_id=DDS_DOMAIN_ID)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.close()
+        cls.daemon.stop()
+
+
+@unittest.skipUnless(DDS_AVAILABLE, "cyclonedds not installed")
+class CycloneDdsPeerListingTests(_Bases.PeerListingCases):
+    """Peer listing cases over Cyclone DDS, where discovery finds every daemon."""
+
+    daemons: List[LibbyDaemon]
+
+    @classmethod
+    def setUpClass(cls):
+        cls.daemons = [
+            _started_daemon(_DdsFixtureDaemon, "listingonedds", GROUP_ID),
+            _started_daemon(_DdsFixtureDaemon, "listingtwodds", GROUP_ID),
+            _started_daemon(_DdsFixtureDaemon, "listingotherdds", OTHER_GROUP_ID),
+        ]
+        cls.group_peers = (f"{GROUP_ID}.listingonedds", f"{GROUP_ID}.listingtwodds")
+        cls.other_peer = f"{OTHER_GROUP_ID}.listingotherdds"
+        cls.impostor_peer = f"{GROUP_ID}.impostordds"
+        cls.impostor = Client.cyclonedds(self_id=cls.impostor_peer, domain_id=DDS_DOMAIN_ID)
+        cls.client = Client.cyclonedds(domain_id=DDS_DOMAIN_ID)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.client.close()
+        cls.impostor.close()
+        for daemon in cls.daemons:
+            daemon.stop()
+
+
+@unittest.skipUnless(DDS_AVAILABLE, "cyclonedds not installed")
+class CycloneDdsLifecycleTests(_Bases.LifecycleCases):
+    """Lifecycle cases over Cyclone DDS."""
+
+    def build_peer(self) -> Tuple[LibbyDaemon, Client, str]:
+        return (_DdsLifecycleDaemon(),
+                Client.cyclonedds(domain_id=DDS_DOMAIN_ID),
+                f"{GROUP_ID}.{_DdsLifecycleDaemon.peer_id}")
 
 
 if __name__ == "__main__":
