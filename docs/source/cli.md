@@ -15,7 +15,7 @@ libby completion bash|zsh                         # print shell code for TAB com
 `<group>.<daemon>` is the address of one daemon: `group` is its `group_id`
 and `daemon` is its `peer_id` (e.g. `peer_id: adc, group_id: hsfei` in the
 daemon's config is addressed as `hsfei.adc`). `Libby.rabbitmq()` /
-`Libby.zmq()` build the actual wire identity from those two fields via
+`Libby.zmq()` / `Libby.cyclonedds()` build the actual wire identity from those two fields via
 `libby.naming.qualified_peer_id`, so a daemon config never needs to
 concatenate them by hand. `group`/`daemon` are case-insensitive (`HSFEI.ADC`
 and `hsfei.adc` reach the same daemon); the keyword isn't. `list` is the one
@@ -91,7 +91,9 @@ clients reply to the broadcast too, and they identify themselves as clients
 and are left out.
 
 Over ZMQ the broadcast only reaches daemons in the address book (`peers:` in
-`cli_config.yaml`, or `--addr`); over RabbitMQ the broker reaches everyone.
+`cli_config.yaml`, or `--addr`); over RabbitMQ the broker reaches everyone;
+over Cyclone DDS it reaches every daemon DDS discovery has found on the
+domain.
 
 ## Completion
 
@@ -173,8 +175,12 @@ cp $(python -c "import libby.cli, os; print(os.path.dirname(libby.cli.__file__))
 Schema:
 
 ```yaml
-transport: rabbitmq          # zmq | rabbitmq
+transport: rabbitmq          # zmq | rabbitmq | cyclonedds
 rabbitmq_url: amqp://localhost
+
+# Used only when transport=cyclonedds:
+dds_domain_id: 0
+dds_config: file:///etc/libby/cyclonedds.xml   # optional; else CYCLONEDDS_URI
 
 # Used only when transport=zmq:
 peers:
@@ -184,7 +190,8 @@ peers:
 All keys are optional. Missing file is fine — defaults are
 `transport: rabbitmq` / `rabbitmq_url: amqp://localhost`.
 
-Precedence: `--transport` / `--rabbitmq-url` flags override yaml; yaml
+Precedence: `--transport` / `--rabbitmq-url` / `--dds-domain` /
+`--dds-config` flags override yaml; yaml
 overrides built-in defaults. Flags must appear *after* the subcommand
 (`libby show --transport zmq foo`, not the other way).
 

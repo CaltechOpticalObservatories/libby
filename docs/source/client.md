@@ -20,6 +20,7 @@ Construct explicitly when you don't want config-file resolution:
 ```python
 client = Client.rabbitmq(rabbitmq_url="amqp://user:pass@host")
 client = Client.zmq(address_book={"hsfei_pickoff": "tcp://host:5555"})
+client = Client.cyclonedds(domain_id=0)   # needs the cyclonedds extra
 ```
 
 - `get(name)` → the value; `show(name)` → the full response dict (value,
@@ -132,7 +133,8 @@ These broadcast a single `keys.list`, which every daemon answers. Nothing
 says how many daemons exist, so they wait the full `timeout_s` (1s by
 default) rather than returning on the first reply, and a daemon that is down
 is simply absent. Over ZMQ the broadcast reaches only the daemons in the
-address book; over RabbitMQ the broker reaches all of them.
+address book; over RabbitMQ the broker reaches all of them; over Cyclone DDS
+it reaches every daemon discovered on the domain.
 
 Only daemons come back. Every `Libby` serves `keys.list`, so another
 `Client` answers the broadcast as well, but `LibbyDaemon` is the only thing

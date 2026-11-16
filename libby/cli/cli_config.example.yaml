@@ -5,10 +5,18 @@
 #   cp <libby_pkg>/cli/cli_config.example.yaml ~/.libby/cli_config.yaml
 #
 # All keys are optional. Built-in defaults match what's shown here.
-# Override per-call with --config / --transport / --rabbitmq-url flags.
+# Override per-call with --config / --transport / --rabbitmq-url /
+# --dds-domain / --dds-config flags.
 
 transport: rabbitmq
 rabbitmq_url: amqp://localhost
+
+# Cyclone DDS (transport: cyclonedds). Peers are found by discovery; only
+# peers on the same domain see each other. dds_config is Cyclone XML, inline
+# or a path/URI, e.g. to list unicast peers where multicast is blocked; when
+# unset, Cyclone reads CYCLONEDDS_URI.
+# dds_domain_id: 0
+# dds_config: file:///etc/libby/cyclonedds.xml
 
 # ZMQ address book (peer_id -> tcp://host:port). Only consulted when
 # transport=zmq. Leave empty for RabbitMQ deployments.

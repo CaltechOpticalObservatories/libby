@@ -29,9 +29,13 @@ from libby.cli.completion import (
 from libby.config_resolve import (
     DEFAULT_BIND,
     DEFAULT_CONFIG_PATH,
+    DEFAULT_DDS_DOMAIN,
     DEFAULT_RABBITMQ_URL,
+    TRANSPORTS,
     load_cli_config,
     resolve_address_book,
+    resolve_dds_config,
+    resolve_dds_domain,
     resolve_rabbitmq_url,
     resolve_transport,
 )
@@ -148,6 +152,17 @@ def _mk_libby(namespace: argparse.Namespace, config: Dict[str, Any]) -> Libby:
             self_id=self_id,
             rabbitmq_url=url,
             keys=[],
+        )
+    if transport == "cyclonedds":
+        domain_id = resolve_dds_domain(namespace.dds_domain, config)
+        logger.debug(
+            "connect self_id=%s transport=cyclonedds domain=%d", self_id, domain_id
+        )
+        return Libby.cyclonedds(
+            self_id=self_id,
+            keys=[],
+            domain_id=domain_id,
+            dds_config=resolve_dds_config(namespace.dds_config, config),
         )
     address_book = resolve_address_book(config, namespace.addr)
     bind = namespace.bind or DEFAULT_BIND
@@ -597,8 +612,12 @@ def cmd_sub(namespace: argparse.Namespace) -> int:
 
 def _connection_key(namespace: argparse.Namespace, config: Dict[str, Any]) -> str:
     """Name the broker or address book a completion cache entry belongs to."""
-    if resolve_transport(namespace.transport, config) == "rabbitmq":
+    transport = resolve_transport(namespace.transport, config)
+    if transport == "rabbitmq":
         return f"rabbitmq {_redact_url(resolve_rabbitmq_url(namespace.rabbitmq_url, config))}"
+    if transport == "cyclonedds":
+        return (f"cyclonedds {resolve_dds_domain(namespace.dds_domain, config)} "
+                f"{resolve_dds_config(namespace.dds_config, config)}")
     return f"zmq {sorted(resolve_address_book(config, namespace.addr).items())}"
 
 
@@ -678,10 +697,15 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(p):
         p.add_argument("--config",
                        help=f"Path to cli_config.yaml (default: {DEFAULT_CONFIG_PATH})")
-        p.add_argument("--transport", choices=("zmq", "rabbitmq"),
+        p.add_argument("--transport", choices=TRANSPORTS,
                        help="Override transport (default: from config or 'rabbitmq')")
         p.add_argument("--rabbitmq-url",
                        help=f"Override RabbitMQ URL (default: from config or '{DEFAULT_RABBITMQ_URL}')")
+        p.add_argument("--dds-domain", type=int,
+                       help=f"Override Cyclone DDS domain id (default: from config or {DEFAULT_DDS_DOMAIN})")
+        p.add_argument("--dds-config",
+                       help="Override Cyclone XML config, inline or a path/URI "
+                            "(default: from config, else CYCLONEDDS_URI)")
         p.add_argument("--bind",
                        help=f"ZMQ ROUTER bind (default: {DEFAULT_BIND})")
         p.add_argument("--addr", action="append", metavar="peer=tcp://host:port",
