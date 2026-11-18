@@ -5,6 +5,7 @@ rules (override → config file → built-in default) live in one place.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,6 +14,7 @@ from .errors import ConfigError
 
 DEFAULT_BIND = "tcp://127.0.0.1:56001"
 DEFAULT_RABBITMQ_URL = "amqp://localhost"
+RABBITMQ_URL_ENV = "LIBBY_RABBITMQ_URL"
 DEFAULT_TRANSPORT = "rabbitmq"
 DEFAULT_DDS_DOMAIN = 0
 TRANSPORTS = ("zmq", "rabbitmq", "cyclonedds")
@@ -41,8 +43,9 @@ def resolve_transport(override: Optional[str], config: Dict[str, Any]) -> str:
 
 
 def resolve_rabbitmq_url(override: Optional[str], config: Dict[str, Any]) -> str:
-    """Pick the RabbitMQ URL: override → config → default."""
-    return override or config.get("rabbitmq_url") or DEFAULT_RABBITMQ_URL
+    """Pick the RabbitMQ URL: override → LIBBY_RABBITMQ_URL → config → default."""
+    return (override or os.environ.get(RABBITMQ_URL_ENV) or config.get("rabbitmq_url")
+            or DEFAULT_RABBITMQ_URL)
 
 
 def resolve_dds_domain(override: Optional[int], config: Dict[str, Any]) -> int:
