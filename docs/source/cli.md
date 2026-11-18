@@ -191,7 +191,8 @@ All keys are optional. Missing file is fine — defaults are
 `transport: rabbitmq` / `rabbitmq_url: amqp://localhost`.
 
 Precedence: `--transport` / `--rabbitmq-url` / `--dds-domain` /
-`--dds-config` flags override yaml; yaml
+`--dds-config` flags override yaml, and `LIBBY_RABBITMQ_URL` sits between
+`--rabbitmq-url` and yaml; yaml
 overrides built-in defaults. Flags must appear *after* the subcommand
 (`libby show --transport zmq foo`, not the other way).
 

@@ -31,6 +31,7 @@ from libby.config_resolve import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_DDS_DOMAIN,
     DEFAULT_RABBITMQ_URL,
+    RABBITMQ_URL_ENV,
     TRANSPORTS,
     load_cli_config,
     resolve_address_book,
@@ -700,7 +701,7 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--transport", choices=TRANSPORTS,
                        help="Override transport (default: from config or 'rabbitmq')")
         p.add_argument("--rabbitmq-url",
-                       help=f"Override RabbitMQ URL (default: from config or '{DEFAULT_RABBITMQ_URL}')")
+                       help=f"Override RabbitMQ URL (default: ${RABBITMQ_URL_ENV}, then config, then '{DEFAULT_RABBITMQ_URL}')")
         p.add_argument("--dds-domain", type=int,
                        help=f"Override Cyclone DDS domain id (default: from config or {DEFAULT_DDS_DOMAIN})")
         p.add_argument("--dds-config",
