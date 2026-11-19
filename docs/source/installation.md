@@ -35,6 +35,17 @@ immediately without reinstalling:
 pip install -e .
 ```
 
+For the Cyclone DDS transport, install the `cyclonedds` extra. On Python 3.10
+to 3.13 its wheel bundles the Cyclone C library:
+
+```bash
+pip install -e ".[cyclonedds]"
+```
+
+cyclonedds 11.0.1 has no Python 3.14 wheel, and its source build fails to
+import on 3.14; the fix is on cyclonedds-python's master branch but not yet in
+a release. Until one ships, the transport is not installable on 3.14.
+
 To also pull in the docs toolchain (Sphinx + the Shibuya theme):
 
 ```bash
@@ -54,6 +65,7 @@ python -m unittest discover -s tests
 ```
 
 Most of `tests/` needs no transport at all. `tests/test_client_integration.py`
-is the exception: it starts a real `LibbyDaemon` over RabbitMQ and exercises
-`Client` against it, and skips itself automatically if no broker is reachable
-at `amqp://localhost`.
+is the exception: it starts a real `LibbyDaemon` and exercises `Client`
+against it, once per transport. The RabbitMQ cases skip themselves if no
+broker is reachable at `amqp://localhost`, and the Cyclone DDS cases unless
+the `cyclonedds` extra is installed.

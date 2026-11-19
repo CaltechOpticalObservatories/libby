@@ -13,7 +13,7 @@ import socket
 import threading
 import time
 import unittest
-from typing import List, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from libby import Client, KeywordError
 from libby.daemon import LibbyDaemon
@@ -111,17 +111,17 @@ class _FailingSink(_RecordingSink):
 
 
 class _TestKeygrabber(KeygrabberDaemon):
-    """Keygrabber writing to a recording sink instead of InfluxDB.
+    """Keygrabber writing to recording sinks instead of InfluxDB.
 
-    ``from_config`` constructs a daemon with no arguments, so the sink is
-    assigned after construction and before ``start``.
+    ``from_config`` constructs a daemon with no arguments, so the sinks are
+    assigned after construction and before ``start``, by name.
     """
 
-    sink: _RecordingSink
+    sinks: Dict[str, _RecordingSink]
 
-    def make_sink(self) -> _RecordingSink:
-        """Return the injected sink."""
-        return self.sink
+    def make_sink(self, name: str, sink_config: Mapping[str, Any]) -> _RecordingSink:
+        """Return the injected sink of that name."""
+        return self.sinks[name]
 
 
 # Nested inside a plain class so unittest's loader, which collects every
@@ -145,7 +145,7 @@ class _Bases:  # pylint: disable=too-few-public-methods
         def setUp(self) -> None:  # pylint: disable=invalid-name
             self.sink = _RecordingSink()
             self.grabber = _TestKeygrabber.from_config(self.grabber_config())
-            self.grabber.sink = self.sink
+            self.grabber.sinks = {"recording": self.sink}
 
         def tearDown(self) -> None:  # pylint: disable=invalid-name
             self.grabber.stop()
@@ -190,8 +190,8 @@ class _Bases:  # pylint: disable=too-few-public-methods
             """Report what the sink actually stored."""
             self.grabber.start()
             self._await_samples()
-            self.assertGreater(self.grabber.counters.points_written, 0)
-            self.assertEqual(self.grabber.counters.write_errors, 0)
+            self.assertGreater(self.grabber.points_written, 0)
+            self.assertEqual(self.grabber.write_errors, 0)
 
         def test_submit_to_a_shut_down_pool_releases_the_claim(self):
             """Survive the pool shutting down between a claim and its submit.
@@ -305,11 +305,11 @@ class _Bases:  # pylint: disable=too-few-public-methods
             Getting this wrong showed a live daemon with queued batches,
             nothing written, and ``isconnected`` still true.
             """
-            self.grabber.sink = _FailingSink()
+            self.grabber.sinks = {"recording": _FailingSink()}
             self.grabber.start()
             deadline = time.monotonic() + SETTLE_TIMEOUT_S
             while time.monotonic() < deadline:
-                if self.grabber.counters.write_errors:
+                if self.grabber.write_errors:
                     break
                 time.sleep(0.05)
 
@@ -337,7 +337,39 @@ class _Bases:  # pylint: disable=too-few-public-methods
             self.grabber.start()
             self._await_samples()
             self.grabber.stop()
-            self.assertEqual(self.grabber.counters.dropped_batches, 0)
+            self.assertEqual(self.grabber.dropped_batches, 0)
+
+        def test_every_sink_gets_every_sample(self):
+            """Hand each batch to each sink, from one read."""
+            second = _RecordingSink()
+            self.grabber.sinks = {"recording": self.sink, "second": second}
+            self.grabber._config["sinks"] = {  # pylint: disable=protected-access
+                "recording": {"type": "recording"}, "second": {"type": "recording"}}
+            self.grabber.start()
+            self._await_samples()
+            self.grabber.stop()
+            self.assertEqual(sorted(map(repr, second.snapshot())),
+                             sorted(map(repr, self.sink.snapshot())))
+
+        def test_a_failing_sink_leaves_the_other_writing(self):
+            """Keep writing to a healthy sink while another one fails.
+
+            The failing sink is listed first, so a shared writer would stall
+            in front of the healthy one.
+            """
+            self.grabber.sinks = {"failing": _FailingSink(), "recording": self.sink}
+            self.grabber._config["sinks"] = {  # pylint: disable=protected-access
+                "failing": {"type": "recording"}, "recording": {"type": "recording"}}
+            self.grabber.start()
+            self._await_samples()
+            with self._grabber_client() as client:
+                self.assertFalse(client.get(self._keyword("isconnected")))
+                self.assertFalse(client.get(self._keyword("failing.isconnected")))
+                self.assertTrue(client.get(self._keyword("recording.isconnected")))
+                self.assertEqual(client.get(self._keyword("failing.pointswritten")), 0)
+                self.assertGreater(client.get(self._keyword("recording.pointswritten")), 0)
+                self.assertGreater(client.get(self._keyword("failing.writeerrors")), 0)
+                self.assertEqual(client.get(self._keyword("recording.writeerrors")), 0)
 
 
 def _collections(peer: str) -> dict:
@@ -386,7 +418,7 @@ class ZmqKeygrabberTests(_Bases.KeygrabberCases):
             "bind": self.grabber_endpoint,
             "address_book": {self.target_peer: self.endpoint},
             "discovery_enabled": False,
-            "sink": {"type": "recording"},
+            "sinks": {"recording": {"type": "recording"}},
             "workers": 2,
             "collections": _collections(self.target_peer),
         }
@@ -417,7 +449,7 @@ class RabbitMQKeygrabberTests(_Bases.KeygrabberCases):
             "transport": "rabbitmq",
             "rabbitmq_url": RABBITMQ_URL,
             "discovery_enabled": False,
-            "sink": {"type": "recording"},
+            "sinks": {"recording": {"type": "recording"}},
             "workers": 2,
             "collections": _collections(self.target_peer),
         }

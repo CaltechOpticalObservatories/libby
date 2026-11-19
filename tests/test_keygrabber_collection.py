@@ -13,6 +13,7 @@ TIMESTAMP = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 
 def _collection_config(**entry: Any):
     config = {
+        "sinks": {"influxdb": {"type": "influxdb"}},
         "collections": {
             "adc": {"peer": "hsfei.adc", "keywords": ["%"], **entry},
         },

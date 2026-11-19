@@ -5,6 +5,7 @@ rules (override → config file → built-in default) live in one place.
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,7 +14,10 @@ from .errors import ConfigError
 
 DEFAULT_BIND = "tcp://127.0.0.1:56001"
 DEFAULT_RABBITMQ_URL = "amqp://localhost"
+RABBITMQ_URL_ENV = "LIBBY_RABBITMQ_URL"
 DEFAULT_TRANSPORT = "rabbitmq"
+DEFAULT_DDS_DOMAIN = 0
+TRANSPORTS = ("zmq", "rabbitmq", "cyclonedds")
 DEFAULT_CONFIG_PATH = Path.home() / ".libby" / "cli_config.yaml"
 
 
@@ -33,14 +37,30 @@ def load_cli_config(path: Optional[str] = None) -> Dict[str, Any]:
 def resolve_transport(override: Optional[str], config: Dict[str, Any]) -> str:
     """Pick the transport: override → config → default; validated."""
     transport = override or config.get("transport") or DEFAULT_TRANSPORT
-    if transport not in ("zmq", "rabbitmq"):
+    if transport not in TRANSPORTS:
         raise ConfigError(f"invalid transport: {transport}")
     return transport
 
 
 def resolve_rabbitmq_url(override: Optional[str], config: Dict[str, Any]) -> str:
-    """Pick the RabbitMQ URL: override → config → default."""
-    return override or config.get("rabbitmq_url") or DEFAULT_RABBITMQ_URL
+    """Pick the RabbitMQ URL: override → LIBBY_RABBITMQ_URL → config → default."""
+    return (override or os.environ.get(RABBITMQ_URL_ENV) or config.get("rabbitmq_url")
+            or DEFAULT_RABBITMQ_URL)
+
+
+def resolve_dds_domain(override: Optional[int], config: Dict[str, Any]) -> int:
+    """Pick the DDS domain id: override → config → default."""
+    if override is not None:
+        return override
+    domain = config.get("dds_domain_id", DEFAULT_DDS_DOMAIN)
+    if isinstance(domain, bool) or not isinstance(domain, int):
+        raise ConfigError(f"invalid dds_domain_id: {domain!r}")
+    return domain
+
+
+def resolve_dds_config(override: Optional[str], config: Dict[str, Any]) -> Optional[str]:
+    """Pick the Cyclone XML config: override → config → none (Cyclone reads CYCLONEDDS_URI)."""
+    return override or config.get("dds_config") or None
 
 
 def parse_addr_kv(entry: str) -> Tuple[str, str]:

@@ -81,7 +81,7 @@ comments above are always quoted.
 
 ### source
 
-Validated exactly like the keygrabber's `sink`: `type: influxdb`, and the token
+Validated like an InfluxDB entry in the keygrabber's `sinks`: `type: influxdb`, and the token
 is read from the environment variable `token_env` names. A `token` key in the
 file is rejected.
 

@@ -2,38 +2,29 @@
 from __future__ import annotations
 
 import dataclasses
-import queue
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-from typing import Callable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, List, Mapping, Optional, Sequence
 
 from ..client import Client
 from ..config import ConfigError, DaemonConfigLoader, with_env_overrides
 from ..daemon import LibbyDaemon
 from ..errors import LibbyError
+from .channel import DRAIN_DEADLINE_S, WRITER_POLL_S, SinkChannel
 from .collection import FAILURES_BEFORE_BACKOFF, Collection
 from .config import TIMEOUT_HEADROOM, KeygrabberConfig, build_sink, parse_config
 from .scheduler import Scheduler
-from .sink import RetryingWriter, Sample, Sink
-
-# How long the writer waits for a batch before checking the retry queue
-WRITER_POLL_S = 0.25
+from .sink import Sample, Sink
 
 # Scheduler wake interval, so a stop request is noticed promptly even when the
 # next tick is far off
 SCHEDULER_TICK_S = 0.25
 
-# Batches held between the readers and the writer. Bounded so a stalled writer
-# cannot grow memory; the retry queue inside RetryingWriter handles a stalled
-# backend.
+# Batches held between the readers and each sink's writer. Bounded so a
+# stalled writer cannot grow memory; the retry queue inside RetryingWriter
+# handles a stalled backend.
 QUEUE_DEPTH_PER_WORKER = 4
-
-# Time allowed for the retry queue to drain during shutdown. Must stay well
-# under the systemd unit's TimeoutStopSec so a wedged sink cannot turn a stop
-# into a SIGKILL.
-DRAIN_DEADLINE_S = 5.0
 
 # How long ``on_stop`` waits for a thread to finish. Outlasts the drain
 # deadline, so a writer that is draining gets to finish rather than being
@@ -51,20 +42,18 @@ class _ConfigSource:
 
 
 class Counters:  # pylint: disable=too-few-public-methods
-    """Tallies the daemon reports, guarded for cross-thread increments.
+    """Read-side tallies the daemon reports, guarded for cross-thread increments.
 
     The lock is only ever held around an increment, never across a read or a
     sink write, because these are served on the transport's receive thread and
-    blocking it would time out every read already in flight.
+    blocking it would time out every read already in flight. Write-side tallies
+    are each sink's, on its :class:`SinkChannel`.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self.points_written = 0
         self.read_errors = 0
-        self.write_errors = 0
         self.skipped_ticks = 0
-        self.dropped_batches = 0
 
     def add(self, **deltas: int) -> None:
         """Add to one or more counters."""
@@ -72,21 +61,15 @@ class Counters:  # pylint: disable=too-few-public-methods
             for name, delta in deltas.items():
                 setattr(self, name, getattr(self, name) + delta)
 
-    def set(self, **values: int) -> None:
-        """Set one or more counters to an absolute value."""
-        with self._lock:
-            for name, value in values.items():
-                setattr(self, name, value)
-
 
 # Coordinates config, client, sink, collections and three kinds of thread;
 # the attribute count is collaborators, not state
 class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attributes
-    """Polls keywords from other libby peers and writes them to a sink.
+    """Polls keywords from other libby peers and writes them to every sink.
 
     One process serves the whole fleet: cadence lives in this daemon's config
-    rather than in each hardware daemon, and the database credential lives in
-    one place.
+    rather than in each hardware daemon, and the database credentials live in
+    one place. Each keyword is read once per tick, whatever the number of sinks.
     """
 
     transport = "rabbitmq"
@@ -98,45 +81,47 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         self.enabled = True
         self._settings: Optional[KeygrabberConfig] = None
         self._client: Optional[Client] = None
-        self._writer: Optional[RetryingWriter] = None
+        self._channels: List[SinkChannel] = []
         self._collections: List[Collection] = []
-        self._queue: "queue.Queue[Tuple[Sample, ...]]" = queue.Queue()
         self._pool: Optional[ThreadPoolExecutor] = None
         self._threads: List[threading.Thread] = []
-        self._writer_thread: Optional[threading.Thread] = None
         self._halt = threading.Event()
         self._scheduler = Scheduler()
         self._source: Optional[_ConfigSource] = None
-        self._sink_healthy = True
-        self._reconnect_wanted = False
-        self._clock: Callable[[], float] = time.monotonic
 
     def on_start(self) -> None:
-        """Parse config, open the sink, and start the reader and writer threads."""
+        """Parse config, open the sinks, and start the reader and writer threads."""
         self._settings = parse_config(self._config)
         self._client = Client(self.libby)
-        self._writer = RetryingWriter(self.make_sink(),
-                                      policy=self._settings.retry)
-        self._writer.connect()
+        queue_size = max(1, self._settings.workers * QUEUE_DEPTH_PER_WORKER)
+        self._channels = [
+            SinkChannel(name, self.make_sink(name, sink_config),
+                        policy=self._settings.retry, queue_size=queue_size,
+                        logger=self.logger)
+            for name, sink_config in self._settings.sinks.items()
+        ]
+        for channel in self._channels:
+            channel.connect()
         self._collections = [Collection(config)
                              for config in self._settings.collections]
-        self._queue = queue.Queue(
-            maxsize=max(1, self._settings.workers * QUEUE_DEPTH_PER_WORKER))
         self._pool = ThreadPoolExecutor(max_workers=self._settings.workers,
                                         thread_name_prefix="keygrabber-read")
         self._scheduler.replace(self._collections)
         self._register_control_keywords()
         self._halt.clear()
-        self._writer_thread = self._spawn(self._write_loop, "keygrabber-write")
+        for channel in self._channels:
+            channel.thread = self._spawn(lambda c=channel: c.run(self._halt),
+                                         f"keygrabber-write-{channel.name}")
         self._spawn(self._schedule_loop, "keygrabber-schedule")
-        self.logger.info("collecting %d collections with %d workers",
-                         len(self._collections), self._settings.workers)
+        self.logger.info("collecting %d collections with %d workers into %s",
+                         len(self._collections), self._settings.workers,
+                         ", ".join(channel.name for channel in self._channels))
 
     def on_stop(self) -> None:
-        """Stop the threads and close the sink once the writer has drained it.
+        """Stop the threads and close each sink once its writer has drained it.
 
-        The draining happens on the writer thread rather than here, so only one
-        thread is ever inside the sink. This method just waits for it.
+        The draining happens on each sink's writer thread rather than here, so
+        only one thread is ever inside a sink. This method just waits for them.
         """
         self._halt.set()
         if self._pool is not None:
@@ -146,17 +131,16 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
             thread.join(timeout=STOP_JOIN_TIMEOUT_S)
         self._threads = []
 
-        writer, self._writer = self._writer, None
-        if writer is None:
-            return
-        if self._writer_thread is not None and self._writer_thread.is_alive():
-            # Closing while the writer is still inside a sink call would put
-            # two threads in one sink; leave it to process exit instead
-            self.logger.error(
-                "writer thread did not finish within %.1fs; leaving the sink open",
-                STOP_JOIN_TIMEOUT_S)
-            return
-        writer.close()
+        channels, self._channels = self._channels, []
+        for channel in channels:
+            if channel.thread is not None and channel.thread.is_alive():
+                # Closing while the writer is still inside a sink call would put
+                # two threads in one sink; leave it to process exit instead
+                self.logger.error(
+                    "sink %s: writer did not finish within %.1fs; leaving it open",
+                    channel.name, STOP_JOIN_TIMEOUT_S)
+                continue
+            channel.close()
 
     @classmethod
     def from_config_file(cls, path, daemon_id=None, *, env_prefix=None):
@@ -165,15 +149,28 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         daemon._source = _ConfigSource(str(path), daemon_id, env_prefix)
         return daemon
 
-    def make_sink(self) -> Sink:
-        """Build the configured sink.
+    def make_sink(self, name: str, sink_config: Mapping[str, Any]) -> Sink:
+        """Build one configured sink.
 
         Override to supply a sink the config cannot describe, or to inject one
         in a test without installing a database client.
         """
-        if self._settings is None:
-            raise LibbyError("keygrabber config has not been parsed yet")
-        return build_sink(self._settings.sink)
+        return build_sink(name, sink_config)
+
+    @property
+    def points_written(self) -> int:
+        """Samples stored, summed over every sink."""
+        return sum(channel.points_written for channel in self._channels)
+
+    @property
+    def write_errors(self) -> int:
+        """Failed sink writes, summed over every sink."""
+        return sum(channel.write_errors for channel in self._channels)
+
+    @property
+    def dropped_batches(self) -> int:
+        """Batches dropped on a full queue, summed over every sink."""
+        return sum(channel.dropped_batches for channel in self._channels)
 
     ### Control surface
 
@@ -182,8 +179,9 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
 
         Every getter here is answered on the transport's receive thread, so
         none of them may block: the counters are plain reads, ``isconnected``
-        reports a flag the writer thread maintains rather than pinging the
-        database, and writing it only requests a reconnect.
+        reports flags the writer threads maintain rather than pinging a
+        database, and writing it only requests a reconnect. The unprefixed
+        sink keywords cover every sink; ``<sink>.*`` report one.
         """
         registry = self.keyword_registry
         registry.bool("enabled",
@@ -192,29 +190,52 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
                       description="Collect on the configured cadences; "
                                   "write false to pause without exiting.")
         registry.bool("isconnected",
-                      getter=lambda: self._sink_healthy,
-                      setter=self._set_connected,
-                      description="Last sink write succeeded; write true to "
-                                  "request a reconnect.")
-        registry.int("pointswritten", getter=lambda: self.counters.points_written,
-                     description="Samples the sink has stored since start.")
+                      getter=lambda: all(c.healthy for c in self._channels),
+                      setter=lambda value: self._set_connected(self._channels, value),
+                      description="Last write to every sink succeeded; write true "
+                                  "to request a reconnect of each.")
+        registry.int("pointswritten", getter=lambda: self.points_written,
+                     description="Samples stored since start, summed over sinks.")
         registry.int("readerrors", getter=lambda: self.counters.read_errors,
                      description="Keyword reads that failed.")
-        registry.int("writeerrors", getter=lambda: self.counters.write_errors,
-                     description="Sink writes that failed.")
-        registry.int("queuedepth", getter=self._queue_depth,
-                     description="Batches waiting in the retry queue.")
+        registry.int("writeerrors", getter=lambda: self.write_errors,
+                     description="Sink writes that failed, summed over sinks.")
+        registry.int("queuedepth",
+                     getter=lambda: sum(c.queue_depth for c in self._channels),
+                     description="Batches waiting in retry queues, summed over sinks.")
         registry.int("skippedticks", getter=lambda: self.counters.skipped_ticks,
                      description="Ticks skipped because the previous read "
                                  "was still in flight.")
-        registry.int("droppedbatches", getter=lambda: self.counters.dropped_batches,
-                     description="Batches discarded because a queue was full.")
+        registry.int("droppedbatches", getter=lambda: self.dropped_batches,
+                     description="Batches discarded because a sink's queue was "
+                                 "full, summed over sinks.")
         registry.trigger("reload", action=self._reload,
                          description="Re-read the config file and apply it.")
         registry.trigger("shutdown", action=self.request_stop,
                          description="Gracefully stop this daemon.")
+        for channel in self._channels:
+            self._register_sink_keywords(channel)
         for collection in self._collections:
             self._register_collection_keywords(collection)
+
+    def _register_sink_keywords(self, channel: SinkChannel) -> None:
+        """Expose one sink's health, so a failing one can be told apart."""
+        name = channel.name
+        registry = self.keyword_registry
+        registry.bool(f"{name}.isconnected",
+                      getter=lambda c=channel: c.healthy,
+                      setter=lambda value, c=channel: self._set_connected([c], value),
+                      description=f"Last write to {name} succeeded; write true "
+                                  "to request a reconnect.")
+        registry.int(f"{name}.pointswritten", getter=lambda c=channel: c.points_written,
+                     description=f"Samples {name} has stored since start.")
+        registry.int(f"{name}.writeerrors", getter=lambda c=channel: c.write_errors,
+                     description=f"Writes to {name} that failed.")
+        registry.int(f"{name}.queuedepth", getter=lambda c=channel: c.queue_depth,
+                     description=f"Batches waiting in {name}'s retry queue.")
+        registry.int(f"{name}.droppedbatches",
+                     getter=lambda c=channel: c.dropped_batches,
+                     description=f"Batches discarded because {name}'s queue was full.")
 
     def _register_collection_keywords(self, collection: Collection) -> None:
         """Expose one collection's cadence and health."""
@@ -244,16 +265,18 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         self.enabled = value
         self.logger.info("collection %s", "enabled" if value else "paused")
 
-    def _set_connected(self, value: bool) -> None:
-        """Request a reconnect; refuse a write of false.
+    @staticmethod
+    def _set_connected(channels: Sequence[SinkChannel], value: bool) -> None:
+        """Request a reconnect of ``channels``; refuse a write of false.
 
-        The reconnect happens on the writer thread rather than here, because a
+        The reconnect happens on each writer thread rather than here, because a
         dead database would otherwise hold the receive thread for the client's
         whole connect timeout. Poll ``isconnected`` for the outcome.
         """
         if not value:
             raise ValueError("write true to reconnect; there is no manual disconnect")
-        self._reconnect_wanted = True
+        for channel in channels:
+            channel.request_reconnect()
 
     def _set_interval(self, name: str, value: float) -> None:
         """Change one collection's cadence, keeping the timeout headroom rule."""
@@ -272,10 +295,6 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
             if collection.name == name:
                 return collection
         raise ValueError(f"unknown collection {name!r}")
-
-    def _queue_depth(self) -> int:
-        writer = self._writer
-        return writer.queue_depth if writer is not None else 0
 
     def _reload(self) -> None:
         """Re-read the config file and apply it to the running collections.
@@ -405,105 +424,9 @@ class KeygrabberDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attrib
         collection.note_success()
 
     def _enqueue(self, samples: Sequence[Sample]) -> None:
-        try:
-            self._queue.put_nowait(tuple(samples))
-        except queue.Full:
-            self.counters.add(dropped_batches=1)
-            self.logger.error("sample queue full; dropped %d samples",
-                              len(samples))
-
-    ### Writing
-
-    def _write_loop(self) -> None:
-        """Own every sink call, so no reader thread ever touches the backend."""
-        while not self._halt.is_set():
-            self._reconnect_if_requested()
-            try:
-                batch = self._queue.get(timeout=WRITER_POLL_S)
-            except queue.Empty:
-                self._flush()
-                continue
-            self._write(batch)
-            self._flush()
-        # Halted: drain here, on the one thread allowed to touch the sink
-        self._drain()
-
-    def _reconnect_if_requested(self) -> None:
-        """Honour an isconnected write, on this thread rather than the caller's."""
-        if not self._reconnect_wanted:
-            return
-        self._reconnect_wanted = False
-        writer = self._writer
-        if writer is None:
-            return
-        try:
-            writer.connect()
-            self._sink_healthy = True
-            self.logger.info("reconnected to the sink on request")
-        except LibbyError as exc:
-            self._sink_healthy = False
-            self.logger.error("sink reconnect failed: %s", exc)
-
-    def _write(self, batch: Tuple[Sample, ...]) -> None:
-        writer = self._writer
-        if writer is None:
-            return
-        try:
-            self.counters.add(points_written=writer.write(batch))
-        except LibbyError as exc:
-            # A sink raising something other than SinkWriteError is a bug in
-            # that sink; the retry writer turns the expected failure into a
-            # queued batch instead
-            self.logger.error("sink write raised: %s", exc)
-        self._track_sink_health(writer)
-
-    def _flush(self) -> None:
-        writer = self._writer
-        if writer is None:
-            return
-        try:
-            self.counters.add(points_written=writer.flush_due())
-        except LibbyError as exc:
-            self.logger.error("sink retry raised: %s", exc)
-        self._track_sink_health(writer)
-
-    def _track_sink_health(self, writer: RetryingWriter) -> None:
-        """Mirror the writer's view, and log only when it changes.
-
-        ``RetryingWriter.write`` queues a failed batch and returns 0 rather
-        than raising, which is what makes retrying possible. It also means a
-        failure cannot be noticed from an exception here, so health and the
-        error count are read back from the writer instead.
-        """
-        self.counters.set(write_errors=writer.failed_attempts)
-        healthy = writer.healthy
-        if healthy == self._sink_healthy:
-            return
-        self._sink_healthy = healthy
-        if healthy:
-            self.logger.info("sink writes are succeeding again")
-        else:
-            self.logger.error("sink writes are failing, %d batch(es) queued",
-                              writer.queue_depth)
-
-    def _drain(self) -> None:
-        """Write whatever is still queued, under a deadline."""
-        deadline = self._clock() + DRAIN_DEADLINE_S
-        while self._clock() < deadline:
-            try:
-                self._write(self._queue.get_nowait())
-                continue
-            except queue.Empty:
-                pass
-            writer = self._writer
-            if writer is None or writer.queue_depth == 0:
-                return
-            self._flush()
-            if writer.queue_depth:
-                time.sleep(WRITER_POLL_S)
-        if self._writer is not None and self._writer.queue_depth:
-            self.logger.error("gave up draining %d batches after %.1fs",
-                              self._writer.queue_depth, DRAIN_DEADLINE_S)
+        batch = tuple(samples)
+        for channel in self._channels:
+            channel.offer(batch)
 
     def _require_client(self) -> Client:
         if self._client is None:
