@@ -11,7 +11,9 @@ group_id: hispec
 transport: rabbitmq
 rabbitmq_url: amqp://localhost
 
-# The InfluxDB the keygrabber writes to. The token is never written here:
+# The InfluxDB the keygrabber writes to. The keygrabber logs each keyword at
+# the interval set in its own config (interval_s), so cards are built from
+# those samples, not from live reads. The token is never written here:
 # token_env names the environment variable that holds it, and a `token` key
 # is rejected. A read-only token is enough.
 source:

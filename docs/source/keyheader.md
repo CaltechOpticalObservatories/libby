@@ -13,6 +13,16 @@ InfluxDB 2.x is the only backend today:
 pip install libby[influxdb]
 ```
 
+The database holds samples, not a continuous record. The keygrabber logs each
+keyword at set intervals, and those intervals are set in the keygrabber's
+config, not keyheader's: each collection's `interval_s`, falling back to the
+keygrabber's `defaults`, and stretched by its failure backoff while a peer is
+not answering (see {doc}`keygrabber`). Keyheader builds each card from the
+samples stored around the requested moment, as the card's acquisition mode
+directs, so a value can be up to one interval old. A keyword the keygrabber
+does not record cannot appear in a header at all, and a card that needs finer
+time resolution needs a shorter interval in the keygrabber config.
+
 ## Running it
 
 ```bash
@@ -132,8 +142,8 @@ leaves the running segments in place.
 
 ## Acquisition modes
 
-Every card is looked up independently, within `window_s` of the requested
-moment:
+Every card is looked up independently among the samples the keygrabber
+stored, within `window_s` of the requested moment:
 
 - `prior`: the latest sample at or before the moment
 - `subsequent`: the earliest sample at or after the moment
@@ -147,8 +157,10 @@ arrives before the keygrabber has stored the next sample, and most values do
 not change during an exposure, so the last stored value stands in. A
 `subsequent` card has no such fallback and is written blank.
 
-`window_s` should exceed the keygrabber's interval for that keyword, including
-its backoff, or a quiet keyword will come back blank.
+`window_s` should exceed the keygrabber's interval for that keyword (its
+collection's `interval_s` in the keygrabber config), including its backoff, or
+a quiet keyword will come back blank. Changing a keyword's interval in the
+keygrabber config may therefore call for a matching change to `window_s` here.
 
 ## Requesting a segment
 
