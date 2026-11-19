@@ -15,6 +15,7 @@ from cyclonedds.core import (DDSException, GuardCondition, InstanceState, Policy
                              ReadCondition, SampleState, ViewState, WaitSet)
 from cyclonedds.domain import Domain, DomainParticipant
 from cyclonedds.idl import IdlStruct, types
+from cyclonedds.idl._machinery import BytesMachine
 from cyclonedds.pub import DataWriter, Publisher
 from cyclonedds.sub import DataReader, Subscriber
 from cyclonedds.topic import Topic
@@ -61,6 +62,21 @@ class DdsEnvelope(IdlStruct, typename="libby.Envelope"):  # pylint: disable=too-
     binary: types.sequence[types.uint8]
 
 
+def _write_binary_in_one_copy() -> None:
+    """Serialize ``binary`` with ``BytesMachine``, which emits the same CDR as ``sequence<octet>``.
+
+    cyclonedds-python packs an octet sequence element by element (8.75 ms per
+    512 KB) and cannot build a DDS type object for a ``bytes`` field.
+    """
+    idl = DdsEnvelope.__idl__  # pylint: disable=no-member  # set by IdlStruct's metaclass
+    idl.populate()
+    for machine in (idl.v1_machine, idl.v2_machine):
+        machine.members_machines["binary"] = BytesMachine()
+
+
+_write_binary_in_one_copy()
+
+
 def to_sample(msg: Message) -> DdsEnvelope:
     """Encode a bamboo message as a DDS sample."""
     env = msg.env
@@ -93,8 +109,7 @@ def to_message(sample: DdsEnvelope) -> Message:
         traceparent=sample.traceparent or None,
         tracestate=sample.tracestate or None,
     )
-    # An octet sequence reads back as a list of ints
-    return Message(envelope, bytes(sample.binary) if sample.binary else None)
+    return Message(envelope, sample.binary or None)
 
 
 def _qos(*partitions: str) -> Qos:

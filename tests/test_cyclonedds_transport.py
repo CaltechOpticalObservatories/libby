@@ -15,6 +15,8 @@ from typing import List, Tuple
 from bamboo import Envelope, Message, MessageBuilder
 
 try:
+    from cyclonedds.idl import IdlStruct
+    from cyclonedds.idl._machinery import BytesMachine
     from libby.cyclonedds_transport import (CycloneDdsTransport, DdsEnvelope, _matched_readers,
                                             to_message, to_sample)
 except ImportError:  # cyclonedds is an optional extra
@@ -60,6 +62,23 @@ class EnvelopeEncodingTests(unittest.TestCase):
         envelope_fields = {field.name for field in dataclasses.fields(Envelope)}
         sample_fields = {field.name for field in dataclasses.fields(DdsEnvelope)}
         self.assertEqual(sample_fields, envelope_fields | {"binary"})
+
+    def test_binary_keeps_the_octet_sequence_wire_format(self):
+        """Write ``binary`` in one copy, byte-identical to a plain ``sequence<octet>``.
+
+        Fails if a cyclonedds upgrade moves the internals the swap relies on.
+        """
+        idl = DdsEnvelope.__idl__  # pylint: disable=no-member  # set by IdlStruct's metaclass
+        self.assertIsInstance(idl.v2_machine.members_machines["binary"], BytesMachine)
+        # Same fields, built the default way, so binary uses the element-wise machine
+        reference = dataclasses.dataclass(type(
+            "ReferenceEnvelope", (IdlStruct,),
+            {"__annotations__": dict(DdsEnvelope.__annotations__)},
+            typename="test.ReferenceEnvelope"))
+        sample = to_sample(MessageBuilder("hsfei.client").pub("frames", {})
+                           .binary(bytes(range(256)) * 4).to(None).build())
+        self.assertEqual(sample.serialize(),
+                         reference(**dataclasses.asdict(sample)).serialize())
 
 
 @unittest.skipIf(CycloneDdsTransport is None, "cyclonedds not installed")
