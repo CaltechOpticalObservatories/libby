@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 from ..config import ConfigError
 from ..keyword import match_pattern
@@ -133,25 +133,7 @@ def build_sink(name: str, sink_config: Mapping[str, Any]) -> Sink:
     if kind == "otlp":
         return _build_otlp_sink(label, sink_config)
 
-    token_env = _required(sink_config, "token_env", label)
-    token = os.environ.get(str(token_env))
-    if not token:
-        raise ConfigError(
-            f"environment variable {token_env} is unset or empty, so {label} "
-            "has no token"
-        )
-
-    # Validate every field before importing the backend, so a malformed config
-    # is reported the same way whether or not the extra is installed
-    settings = {
-        "url": str(_required(sink_config, "url", label)),
-        "org": str(_required(sink_config, "org", label)),
-        "bucket": str(_required(sink_config, "bucket", label)),
-        "token": token,
-    }
-    if "timeout_ms" in sink_config:
-        settings["timeout_ms"] = _positive_int(
-            sink_config["timeout_ms"], f"{label}.timeout_ms")
+    settings = influx_settings(sink_config, label)
 
     # Deferred: influxdb-client is an optional extra, so a deployment using a
     # different backend never has to install it
@@ -159,6 +141,46 @@ def build_sink(name: str, sink_config: Mapping[str, Any]) -> Sink:
         InfluxConfig, InfluxSink,
     )
     return InfluxSink(InfluxConfig(**settings))
+
+
+def influx_settings(section: Mapping[str, Any], label: str) -> Dict[str, Any]:
+    """Validate an InfluxDB config section into ``InfluxConfig`` arguments.
+
+    Shared by the keygrabber's InfluxDB ``sinks`` and keyheader's ``source``, which
+    describe the same database. Every field is checked before the backend is
+    imported, so a malformed config is reported the same way whether or not the
+    extra is installed. ``label`` names the section in error messages.
+    """
+    kind = str(section.get("type", "")).strip().lower()
+    if not kind:
+        raise ConfigError(f"{label}.type is required")
+    if kind != "influxdb":
+        raise ConfigError(
+            f"unsupported {label} type {kind!r}; expected 'influxdb'")
+
+    if "token" in section:
+        raise ConfigError(
+            f"{label}.token must not appear in the config; name an environment "
+            f"variable with {label}.token_env instead"
+        )
+    token_env = _required(section, "token_env", label)
+    token = os.environ.get(str(token_env))
+    if not token:
+        raise ConfigError(
+            f"environment variable {token_env} is unset or empty, so {label} "
+            "has no token"
+        )
+
+    settings: Dict[str, Any] = {
+        "url": str(_required(section, "url", label)),
+        "org": str(_required(section, "org", label)),
+        "bucket": str(_required(section, "bucket", label)),
+        "token": token,
+    }
+    if "timeout_ms" in section:
+        settings["timeout_ms"] = _positive_int(
+            section["timeout_ms"], f"{label}.timeout_ms")
+    return settings
 
 
 def _build_otlp_sink(label: str, sink_config: Mapping[str, Any]) -> Sink:

@@ -97,6 +97,38 @@ the docs build does not install the optional `influxdb` extra.
    :show-inheritance:
 ```
 
+## Keyheader
+
+```{eval-rst}
+.. automodule:: libby.keyheader.source
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
+.. automodule:: libby.keyheader.config
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
+.. automodule:: libby.keyheader.acquire
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
+.. automodule:: libby.keyheader.cards
+   :members:
+   :show-inheritance:
+```
+
+```{eval-rst}
+.. automodule:: libby.keyheader.daemon
+   :members:
+   :show-inheritance:
+```
+
 ## Telemetry
 
 ```{eval-rst}
