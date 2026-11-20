@@ -5,7 +5,7 @@ Libby: a tiny messaging library which uses Bamboo with pluggable transports (ZMQ
 ## Documentation
 
 Full docs (installation, keywords, the `Client` library, the `libby` CLI, how
-to build a `LibbyDaemon` peer, the keygrabber, optional OpenTelemetry export,
+to build a `LibbyDaemon` peer, choosing a transport, the keygrabber, optional OpenTelemetry export,
 plus the generated API
 reference) are
 built with Sphinx + the Shibuya theme and published to GitHub Pages:
