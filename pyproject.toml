@@ -24,7 +24,7 @@ dependencies = [
 
 [project.optional-dependencies]
 cyclonedds = [
-  "cyclonedds>=11.0.1",
+  "cyclonedds>=11.1.0",
 ]
 influxdb = [
   "influxdb-client>=1.40",

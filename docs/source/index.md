@@ -29,6 +29,7 @@ keywords
 client
 cli
 daemon
+transports
 keygrabber
 keyheader
 telemetry
@@ -40,6 +41,7 @@ api/index
 
 - New to the package? Start with {doc}`installation`.
 - Building a peer that serves keywords? Read {doc}`keywords` then {doc}`daemon`.
+- Picking between RabbitMQ and Cyclone DDS? Read {doc}`transports`.
 - Writing a script or tool that talks to peers? Read {doc}`client`.
 - Poking at peers interactively? Read {doc}`cli`.
 - Recording keywords for Grafana? Read {doc}`keygrabber`.

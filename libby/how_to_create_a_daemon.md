@@ -314,6 +314,8 @@ Libby supports three transports that you can switch between with a single line:
 - **Best for**: many peers and high request rates without a broker in the path
 - **Setup**: `pip install libby[cyclonedds]`; on networks that block multicast, list unicast peers in the Cyclone XML (`dds_config` or `CYCLONEDDS_URI`)
 
+For measured performance and when to pick which, see [Choosing a transport](https://caltechopticalobservatories.github.io/libby/transports.html).
+
 **To switch transports**: Just change `transport = "zmq"` to `transport = "rabbitmq"` or `transport = "cyclonedds"` in your peer class. Everything else stays the same!
 
 ### Group ID (optional)
