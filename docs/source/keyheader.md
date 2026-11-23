@@ -164,12 +164,35 @@ keygrabber config may therefore call for a matching change to `window_s` here.
 
 ## Requesting a segment
 
-The service key is `keyheader.segment`:
+The service key is `keyheader.segment`. `rpc` is a method of a `Libby`
+instance, not of the `libby` module. Inside a `LibbyDaemon`, use the daemon's
+own `self.libby`:
 
 ```python
-reply = libby.rpc("hispec.keyheader", "keyheader.segment",
-                  {"segment": "EXP-BEGIN", "time": "2026-11-11T08:15:02.123Z"})
+envelope = self.libby.rpc("hispec.keyheader", "keyheader.segment",
+                          {"segment": "EXP-BEGIN", "time": "2026-11-11T08:15:02.123Z"})
+reply = envelope.get("resp")
 ```
+
+From a standalone script, make a `Libby` on the same transport as keyheader
+first:
+
+```python
+from libby import Libby
+
+lib = Libby.rabbitmq("header-test", "amqp://localhost", keys=[])
+try:
+    envelope = lib.rpc("hispec.keyheader", "keyheader.segment",
+                       {"segment": "EXP-BEGIN", "time": "2026-11-11T08:15:02.123Z"})
+    reply = envelope.get("resp")
+finally:
+    lib.stop()
+```
+
+The peer id is keyheader's `group_id` and `peer_id` joined with a dot. `rpc`
+returns an envelope: the keyheader's reply is under `resp`, and
+`envelope.get("resp")` is `None` if keyheader never answered
+(`envelope["status"]` says `"timeout"` if the request was not delivered).
 
 `time` is ISO 8601. A time with no offset is taken as UTC. The reply is:
 
