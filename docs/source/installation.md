@@ -42,9 +42,17 @@ to 3.13 its wheel bundles the Cyclone C library:
 pip install -e ".[cyclonedds]"
 ```
 
-cyclonedds 11.0.1 has no Python 3.14 wheel, and its source build fails to
-import on 3.14; the fix is on cyclonedds-python's master branch but not yet in
-a release. Until one ships, the transport is not installable on 3.14.
+cyclonedds has no Python 3.14 wheel yet. On 3.14, build the Cyclone C
+library of the same version from source, then build the Python package
+against it:
+
+```bash
+git clone --branch 11.1.0 https://github.com/eclipse-cyclonedds/cyclonedds
+cmake -S cyclonedds -B cyclonedds/build -DCMAKE_INSTALL_PREFIX="$HOME/.local/opt/cyclonedds-11.1.0" \
+      -DBUILD_EXAMPLES=OFF -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+cmake --build cyclonedds/build --target install -j
+CYCLONEDDS_HOME="$HOME/.local/opt/cyclonedds-11.1.0" pip install --no-binary cyclonedds -e ".[cyclonedds]"
+```
 
 To also pull in the docs toolchain (Sphinx + the Shibuya theme):
 
