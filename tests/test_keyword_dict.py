@@ -4,9 +4,8 @@ from __future__ import annotations
 import unittest
 from typing import Any, Dict, Optional
 
-from libby import (BoolKeyword, DictKeyword, Field, FloatKeyword, IntKeyword,
-                   KeywordRegistry, StringKeyword)
-from libby.keyword import FIELD_TYPES
+from libby import (FIELD_TYPES, BoolKeyword, DictKeyword, Field, FloatKeyword,
+                   IntKeyword, KeywordRegistry, StringKeyword)
 
 MOVE_FIELDS = {
     "x": "float",

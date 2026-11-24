@@ -11,6 +11,7 @@ from .keyword import (
     DictKeyword,
     Field,
     FieldSpec,
+    FIELD_TYPES,
     TriggerKeyword,
     match_pattern,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "DictKeyword",
     "Field",
     "FieldSpec",
+    "FIELD_TYPES",
     "TriggerKeyword",
     "KeywordRegistry",
     "match_pattern",
