@@ -123,6 +123,10 @@ hangs. An unreachable broker completes nothing rather than erroring.
 - Empty (`key=`) and `null` clear nullable values.
 - Coercion is heuristic: `true` / `false` → bool, integer-looking → int,
   decimal-looking → float, else string.
+- A value starting with `{` is parsed as a JSON object, for `dict` keywords.
+  Quote it for the shell: `libby modify hsfei.stage.move '{"x": 1.5, "y": 2}'`.
+  Malformed JSON is an error, not sent as a string. `show` prints dict values
+  as JSON, so they can be pasted back into a `modify`.
 - The CLI consults `keys.describe` for the keyword's `timeout_s` metadata
   before sending the modify, so slow operations (e.g. stage motion) get a
   longer wait automatically. `--timeout <s>` overrides.

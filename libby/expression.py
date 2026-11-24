@@ -270,7 +270,10 @@ def _parse_literal(text: str) -> Any:
             and text.endswith(quote)
         ):
             return text[len(quote):-len(quote)]
-    return coerce_value(text)
+    try:
+        return coerce_value(text)
+    except ValueError as ex:
+        raise ExpressionError(f"{ex}: {text}") from ex
 
 
 __all__ = ["Comparison", "parse_comparison"]

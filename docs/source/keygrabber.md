@@ -96,7 +96,7 @@ carries the keyword's read time:
 libby_keyword{group="hsfei", peer="adc", keyword="positionvalue1"}
 ```
 
-Bools are stored as 0 and 1; string and null values are not stored. A batch
+Bools are stored as 0 and 1; string, dict and null values are not stored. A batch
 written late, after an outage, still lands at its read time as long as
 Prometheus accepts it, which the backend does for two hours. `timeout_s` is
 optional. Needs the `otel` extra.
@@ -233,6 +233,7 @@ Three details follow from what Influx can store:
 - Integers are written as floats, so one peer reporting `0` and another `0.5`
   for the same keyword cannot collide as int against float and be rejected.
 - A null value is skipped, since Influx has no null field. It is not an error.
+- A dict value is skipped too: it has no single field to store it in.
 - A keyword with no units gets a `units=none` tag, because Influx drops an
   empty tag value and the keyword would otherwise split into two series.
 

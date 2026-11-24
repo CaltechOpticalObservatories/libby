@@ -35,7 +35,7 @@ def to_point(sample: Sample) -> Optional[NumberDataPoint]:
     stores. Units are a label only when the keyword declares them.
     """
     value = sample.value
-    if value is None or isinstance(value, str):
+    if not isinstance(value, (bool, int, float)):
         return None
     attributes = {"group": sample.group, "peer": sample.peer, "keyword": sample.keyword}
     if sample.units:

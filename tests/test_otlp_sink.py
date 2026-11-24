@@ -94,6 +94,10 @@ class ToPointTests(unittest.TestCase):
         self.assertIsNone(to_point(_sample(value="moving")))
         self.assertIsNone(to_point(_sample(value=None)))
 
+    def test_dicts_are_skipped(self):
+        """A dict keyword in a whole-peer read must not fail the batch."""
+        self.assertIsNone(to_point(_sample(value={"x": 1.0, "y": 2.0})))
+
 
 @unittest.skipUnless(HAS_OTEL, "needs the otel extra")
 class WriteTests(unittest.TestCase):

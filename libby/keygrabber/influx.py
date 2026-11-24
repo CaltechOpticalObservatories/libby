@@ -47,9 +47,10 @@ def to_point(sample: Sample) -> Optional[Point]:
 
     A null value is skipped rather than raised: ``lasterror`` is nullable on
     every daemon and is ``None`` most of the time, so a collection reading a
-    whole peer would otherwise fail on every tick.
+    whole peer would otherwise fail on every tick. A dict value is skipped
+    too: it has no single field to store, and its repr is not worth keeping.
     """
-    if sample.value is None:
+    if sample.value is None or isinstance(sample.value, dict):
         return None
     return (
         Point(sample.keyword)

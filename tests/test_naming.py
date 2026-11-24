@@ -105,6 +105,15 @@ class CoerceValueTests(unittest.TestCase):
     def test_falls_back_to_string(self):
         self.assertEqual(coerce_value("engineering"), "engineering")
 
+    def test_json_object_becomes_dict(self):
+        self.assertEqual(coerce_value('{"x": 1.5, "fast": true, "axis": "y"}'),
+                         {"x": 1.5, "fast": True, "axis": "y"})
+        self.assertEqual(coerce_value('  {}'), {})
+
+    def test_malformed_json_object_raises(self):
+        with self.assertRaisesRegex(ValueError, "not valid JSON"):
+            coerce_value("{x: 1}")
+
 
 if __name__ == "__main__":
     unittest.main()

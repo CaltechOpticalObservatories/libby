@@ -133,6 +133,10 @@ class ToPointTests(unittest.TestCase):
         """Skip a null rather than raising: lasterror is null most of the time."""
         self.assertIsNone(to_point(_sample(keyword="lasterror", value=None)))
 
+    def test_dict_value_is_skipped(self):
+        """Skip a dict keyword: there is no single field to store it in."""
+        self.assertIsNone(to_point(_sample(keyword="target", value={"x": 1.0})))
+
     def test_missing_units_get_a_placeholder(self):
         """Keep a unitless keyword on one series instead of dropping the tag."""
         line = to_point(_sample(units=None)).to_line_protocol()
