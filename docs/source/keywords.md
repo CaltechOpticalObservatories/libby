@@ -41,24 +41,72 @@ is a convenience layer over the same type classes.
 
 A `DictKeyword` carries a JSON object (a `dict` with string keys), for a
 request that needs more than one value at once, such as a move with a target
-and a speed. Its fields are not type-checked yet; enforce their shape with a
-`validator`, which runs before the setter:
+and a speed. Give it a `fields` schema to have each modify checked before the
+setter sees it:
 
 ```python
-def check_move(v):
-    missing = {"x", "y"} - v.keys()
-    return f"missing fields: {sorted(missing)}" if missing else None
+from libby import Field
 
-libby.keyword_registry.dict("move", setter=stage.move_to,
-                            validator=check_move, timeout_s=30.0)
+libby.keyword_registry.dict(
+    "move",
+    setter=stage.move_to,
+    fields={
+        "x": Field("float", units="mm"),
+        "y": Field("float", units="mm"),
+        "speed": Field("float", units="mm/s", required=False,
+                       description="Defaults to the stage maximum"),
+    },
+    timeout_s=30.0,
+    description="Move to (x, y).",
+)
 ```
+
+A field is a type name (`"bool"`, `"int"`, `"float"`, `"string"`, or `"any"`
+for an unchecked JSON value) or a `Field`, which adds `units`, `description`,
+`required` (default true) and `nullable` (default false). With a schema, a
+modify:
+
+- may name only the schema's fields, and must include every required one;
+- must give each field a value of its type, by the same rules as the scalar
+  keywords: an `int` field rejects `true`, and a `float` field accepts `2` and
+  casts it to `2.0`;
+- passes an optional field it leaves out to the setter as absent, not `None`.
 
 ```python
-client.rpc("my-peer", "move", {"value": {"x": 1.5, "y": 2.0, "speed": 5}})
+client.rpc("my-peer", "move", {"value": {"x": 1.5, "y": 2.0, "speed": 5}})  # ok
+client.rpc("my-peer", "move", {"value": {"x": 1.5}})
+# {"ok": False, "error": "missing required field 'y'"}
+client.rpc("my-peer", "move", {"value": {"x": 1.5, "y": 2, "z": 0}})
+# {"ok": False, "error": "unknown field 'z'; expected 'x', 'y', 'speed'"}
+client.rpc("my-peer", "move", {"value": {"x": 1.5, "y": "2"}})
+# {"ok": False, "error": "field 'y': value must be a number"}
 ```
 
-The setter receives a shallow copy of the sent object. The keygrabber skips
-dict values: neither sink has a single field to store one in.
+A `validator` runs after the schema checks, for rules that span fields, such
+as "the target must be inside the travel range". Without `fields`, any dict is
+accepted and the validator is the only check. Fields are flat: use `"any"` for
+a nested value. The setter always receives a new dict, never the sent object.
+
+`keys.describe` advertises the schema under `fields`, and `libby describe`
+prints it:
+
+```
+$ libby describe hsfei.stage.move
+hsfei.stage.move:
+  type         dict
+  readonly     False
+  writeonly    True
+  nullable     False
+  timeout_s    30.0
+  description  Move to (x, y).
+  fields:
+    x      float  required  mm
+    y      float  required  mm
+    speed  float  optional  mm/s  Defaults to the stage maximum
+```
+
+The keygrabber skips dict values: neither sink has a single field to store
+one in.
 
 ## Calling keywords
 

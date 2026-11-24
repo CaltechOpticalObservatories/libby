@@ -9,6 +9,7 @@ from .keyword import (
     FloatKeyword,
     StringKeyword,
     DictKeyword,
+    Field,
     TriggerKeyword,
     match_pattern,
 )
@@ -39,6 +40,7 @@ __all__ = [
     "FloatKeyword",
     "StringKeyword",
     "DictKeyword",
+    "Field",
     "TriggerKeyword",
     "KeywordRegistry",
     "match_pattern",
