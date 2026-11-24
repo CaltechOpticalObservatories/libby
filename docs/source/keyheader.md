@@ -172,6 +172,9 @@ reply = client.set("hispec.keyheader.segment",
                    {"segment": "EXP-BEGIN", "time": "2026-11-11T08:15:02.123Z"})
 ```
 
+The keyword's schema has two required string fields, `segment` and `time`,
+and `libby describe hispec.keyheader.segment` lists them. A request with a
+missing, extra or non-string field is rejected before it reaches the source.
 `time` is ISO 8601. A time with no offset is taken as UTC. Unlike an ordinary
 keyword write, the reply's value is the answer rather than an echo of the
 request:

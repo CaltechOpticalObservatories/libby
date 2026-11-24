@@ -143,13 +143,29 @@ class SegmentTests(unittest.TestCase):
         self.assertEqual(reply["time"], "2026-11-11T08:15:00.000")
         self.assertEqual(len(reply["cards"]), 5)
 
-    def test_request_needs_segment_and_time(self):
-        """Reject a request missing either field."""
-        # pylint: disable=protected-access
-        with self.assertRaisesRegex(ValueError, "segment"):
-            self.daemon._serve({"time": "2026-11-11T08:15:00Z"})
-        with self.assertRaisesRegex(ValueError, "time"):
-            self.daemon._serve({"segment": "EXP-BEGIN"})
+    def test_request_schema(self):
+        """Reject a request with a missing, unknown or mistyped field."""
+        keyword = self.daemon._segment_keyword()  # pylint: disable=protected-access
+        cases = [
+            ({"time": "2026-11-11T08:15:00Z"}, "missing required field 'segment'"),
+            ({"segment": "EXP-BEGIN"}, "missing required field 'time'"),
+            ({"segment": "EXP-BEGIN", "time": "2026-11-11", "exp": 1},
+             "unknown field 'exp'"),
+            ({"segment": "EXP-BEGIN", "time": 1731312900}, "field 'time'"),
+            ({"segment": "EXP-BEGIN", "time": "yesterday"}, "ISO 8601"),
+        ]
+        for request, error in cases:
+            with self.subTest(request=request):
+                reply = keyword.handle({"value": request})
+                self.assertFalse(reply["ok"])
+                self.assertIn(error, reply["error"])
+        self.assertEqual(self.daemon.counters.requests, 0)
+
+    def test_describes_schema(self):
+        """Advertise the request's fields, so `libby describe` shows them."""
+        described = self.daemon._segment_keyword().describe()  # pylint: disable=protected-access
+        self.assertEqual(set(described["fields"]), {"segment", "time"})
+        self.assertTrue(described["writeonly"])
 
 
 class RequestKeywordTests(unittest.TestCase):
@@ -157,6 +173,8 @@ class RequestKeywordTests(unittest.TestCase):
 
     def setUp(self):
         self.keyword = RequestKeyword("ask", lambda request: {"got": request["x"]})
+        self.typed = RequestKeyword("typed", lambda request: request["x"] * 2,
+                                    fields={"x": "float"})
 
     def test_reply_is_handler_result(self):
         """Answer with the result, not an echo of the request."""
@@ -174,6 +192,14 @@ class RequestKeywordTests(unittest.TestCase):
         reply = self.keyword.handle({"value": {}})
         self.assertFalse(reply["ok"])
         self.assertIn("x", reply["error"])
+
+    def test_fields_checked_and_cast(self):
+        """Check the schema first, and hand the handler the cast values."""
+        self.assertEqual(self.typed.handle({"value": {"x": 2}}),
+                         {"ok": True, "value": 4.0})
+        reply = self.typed.handle({"value": {"x": "2"}})
+        self.assertFalse(reply["ok"])
+        self.assertIn("field 'x'", reply["error"])
 
     def test_write_only(self):
         """Describe as a write-only dict, so the keygrabber skips it."""

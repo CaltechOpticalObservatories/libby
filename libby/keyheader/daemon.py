@@ -10,13 +10,21 @@ from typing import Any, Callable, List, Mapping, Optional, cast
 from ..config import ConfigError, DaemonConfigLoader, with_env_overrides
 from ..daemon import LibbyDaemon
 from ..errors import LibbyError
-from ..keyword import DictKeyword
+from ..keyword import DictKeyword, Field, FieldSpec
 from .acquire import Acquired, acquire, query_range
 from .cards import Entry, fits_date, segment_entries
 from .config import CardConfig, KeyheaderConfig, build_source, parse_config
 from .source import Source, SourceError
 
 SEGMENT_KEYWORD = "segment"
+
+# The schema of a request written to the segment keyword. DictKeyword checks
+# names and types before the daemon sees the request; the daemon still checks
+# that the segment exists and that the time parses.
+SEGMENT_FIELDS = {
+    "segment": Field("string", description="Configured segment name"),
+    "time": Field("string", description="ISO 8601 moment; UTC if no offset"),
+}
 
 
 @dataclass(frozen=True)
@@ -33,14 +41,16 @@ class RequestKeyword(DictKeyword):
 
     A plain keyword's modify echoes the value it applied. A request instead
     wants an answer, so the handler's return value becomes the reply's
-    ``value``. The request is still type-checked as a dict first.
+    ``value``. The request is still checked as a dict, against ``fields`` when
+    given, before the handler sees it.
     """
 
     def __init__(self, name: str, handler: Callable[[dict], Any], *,
+                 fields: Optional[Mapping[str, FieldSpec]] = None,
                  description: str = "",
                  timeout_s: Optional[float] = None) -> None:
-        super().__init__(name, setter=handler, description=description,
-                         timeout_s=timeout_s)
+        super().__init__(name, setter=handler, fields=fields,
+                         description=description, timeout_s=timeout_s)
         self._handler = handler
 
     def _modify(self, raw: Any) -> dict:
@@ -169,11 +179,13 @@ class KeyheaderDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attribu
         return segment_entries(segment, moment, results)
 
     def _serve(self, request: Mapping[str, Any]) -> dict:
-        """Answer a write to the ``segment`` keyword."""
-        name = request.get("segment")
-        if not isinstance(name, str) or not name:
-            raise ValueError("request needs a 'segment' name")
-        moment = parse_time(request.get("time"))
+        """Answer a write to the ``segment`` keyword.
+
+        The keyword's schema has already checked that both fields are present
+        and are strings.
+        """
+        name = request["segment"]
+        moment = parse_time(request["time"])
         entries = self.segment(name, moment)
         return {"segment": name, "time": fits_date(moment), "cards": entries}
 
@@ -205,10 +217,7 @@ class KeyheaderDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attribu
     ### Keywords
 
     def _register_keywords(self) -> None:
-        self.register_keyword(RequestKeyword(
-            SEGMENT_KEYWORD, self._serve,
-            description="Write {segment, time} to get that segment's FITS "
-                        "cards at that moment."))
+        self.register_keyword(self._segment_keyword())
         registry = self.keyword_registry
         registry.bool("isconnected", getter=lambda: self._source_healthy,
                       description="Last source read succeeded.")
@@ -225,6 +234,12 @@ class KeyheaderDaemon(LibbyDaemon):  # pylint: disable=too-many-instance-attribu
                                      "segments.")
         registry.trigger("shutdown", action=self.request_stop,
                          description="Gracefully stop this daemon.")
+
+    def _segment_keyword(self) -> RequestKeyword:
+        return RequestKeyword(
+            SEGMENT_KEYWORD, self._serve, fields=SEGMENT_FIELDS,
+            description="Write {segment, time} to get that segment's FITS "
+                        "cards at that moment.")
 
     def _segment_names(self) -> str:
         settings = self._settings
