@@ -19,7 +19,7 @@ from .config import (
     is_reserved,
     parse_config,
 )
-from .daemon import SERVICE_KEY, KeyheaderDaemon, parse_time
+from .daemon import SEGMENT_KEYWORD, KeyheaderDaemon, RequestKeyword, parse_time
 from .source import Source, SourceError, SourceReadError
 
 __all__ = [
@@ -28,7 +28,8 @@ __all__ = [
     "KeyheaderConfig",
     "KeyheaderDaemon",
     "Mode",
-    "SERVICE_KEY",
+    "RequestKeyword",
+    "SEGMENT_KEYWORD",
     "SegmentConfig",
     "Source",
     "SourceError",
