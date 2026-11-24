@@ -1,6 +1,7 @@
 """Keyword-name parsing, value coercion, and peer/group naming (transport-agnostic)."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Optional, Tuple
 
@@ -93,11 +94,23 @@ _LITERALS = {"null": None, "true": True, "false": False}
 def coerce_value(value: str) -> Any:
     """Coerce a modify value string.
 
-    Empty / 'null' → None; 'true'/'false' → bool; parseable as int → int;
-    parseable as float → float; otherwise the original string.
+    Empty / 'null' → None; '{...}' → dict (parsed as a JSON object);
+    'true'/'false' → bool; parseable as int → int; parseable as float →
+    float; otherwise the original string.
+
+    Raises:
+        ValueError: the value starts with ``{`` but is not valid JSON.
+            Sending it on as a string would only earn a less helpful
+            rejection from a dict keyword.
     """
     if value == "":
         return None
+    if value.lstrip().startswith("{"):
+        # Valid JSON that opens with '{' is always an object
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as ex:
+            raise ValueError(f"value starts with '{{' but is not valid JSON: {ex}") from ex
     low = value.strip().lower()
     if low in _LITERALS:
         return _LITERALS[low]

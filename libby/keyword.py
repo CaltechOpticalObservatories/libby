@@ -164,6 +164,23 @@ class StringKeyword(Keyword):
         return v
 
 
+class DictKeyword(Keyword):
+    """Keyword whose value is a JSON object: a ``dict`` with ``str`` keys.
+
+    Field values are not type-checked; constrain them with ``validator``. The
+    setter receives a shallow copy, never the caller's payload object.
+    """
+
+    type_name = "dict"
+
+    def _type_check(self, v: Any) -> dict[str, Any]:
+        if not isinstance(v, dict):
+            raise TypeError("value must be a dict")
+        if not all(isinstance(k, str) for k in v):
+            raise TypeError("dict keys must be strings")
+        return dict(v)
+
+
 class TriggerKeyword(Keyword):
     """Write-only action keyword. Any modify fires ``action``; show returns ``false``."""
 
@@ -211,6 +228,7 @@ __all__ = [
     "IntKeyword",
     "FloatKeyword",
     "StringKeyword",
+    "DictKeyword",
     "TriggerKeyword",
     "match_pattern",
 ]

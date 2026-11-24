@@ -183,6 +183,14 @@ def _mk_libby(namespace: argparse.Namespace, config: Dict[str, Any]) -> Libby:
     )
 
 
+def _fmt_value(value: Any) -> Any:
+    """Render a keyword value for text output: dicts as compact JSON, so a
+    shown value can be pasted back into ``modify``; everything else as is."""
+    if isinstance(value, dict):
+        return json.dumps(value, separators=(", ", ": "))
+    return value
+
+
 def _emit_one(qualified: str, resp: Dict[str, Any], *, as_json: bool) -> int:
     """Print one keyword response. Return exit code (0 ok, 2 error)."""
     if not isinstance(resp, dict):
@@ -197,9 +205,9 @@ def _emit_one(qualified: str, resp: Dict[str, Any], *, as_json: bool) -> int:
     value = resp.get("value")
     units = resp.get("units")
     if units:
-        print(f"{qualified} = {value} {units}")
+        print(f"{qualified} = {_fmt_value(value)} {units}")
     else:
-        print(f"{qualified} = {value}")
+        print(f"{qualified} = {_fmt_value(value)}")
     return 0
 
 
@@ -219,9 +227,9 @@ def _emit_many(rows: List[Tuple[str, Dict[str, Any]]], *, as_json: bool) -> int:
         value = resp.get("value")
         units = resp.get("units")
         if units:
-            print(f"{qualified:<{width}} = {value} {units}")
+            print(f"{qualified:<{width}} = {_fmt_value(value)} {units}")
         else:
-            print(f"{qualified:<{width}} = {value}")
+            print(f"{qualified:<{width}} = {_fmt_value(value)}")
     return rc
 
 
@@ -294,12 +302,12 @@ def _emit_wait(expression: str, result: WaitResult, *, as_json: bool) -> int:
         }, indent=2))
         return 0 if result.satisfied else RC_WAIT_TIMEOUT
     if result.satisfied:
-        print(f"{result.address} = {result.value} "
+        print(f"{result.address} = {_fmt_value(result.value)} "
               f"(satisfied after {_fmt_elapsed(result.elapsed_s)})")
         return 0
     print(f"libby: {expression}: still false after "
           f"{_fmt_elapsed(result.elapsed_s)}; "
-          f"{result.address} = {result.value}", file=sys.stderr)
+          f"{result.address} = {_fmt_value(result.value)}", file=sys.stderr)
     return RC_WAIT_TIMEOUT
 
 
@@ -460,7 +468,10 @@ def cmd_modify(namespace: argparse.Namespace) -> int:
     group, daemon, keyword = parse_keyword(keyword_str)
     peer = peer_id(group, daemon)
     qualified = f"{group}.{daemon}.{keyword}"
-    value = coerce_value(value_str)
+    try:
+        value = coerce_value(value_str)
+    except ValueError as ex:
+        return _emit_error(qualified, str(ex), as_json=namespace.json)
 
     lib: Optional[Libby] = None
     try:

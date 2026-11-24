@@ -7,11 +7,11 @@ payload convention:
 - `{"value": V}` → modify (apply, then return it)
 
 Types: `BoolKeyword`, `IntKeyword`, `FloatKeyword`, `StringKeyword`,
-`TriggerKeyword`. Access mode is inferred — pass a `getter` for read-only, a
-`setter` for write-only, both for read-write. Optional extras: `units`,
-`description`, `nullable`, `validator`, `timeout_s` (advertised in
-`keys.describe`; the CLI uses it to extend the modify timeout for slow
-operations like motion).
+`DictKeyword`, `TriggerKeyword`. Access mode is inferred — pass a `getter`
+for read-only, a `setter` for write-only, both for read-write. Optional
+extras: `units`, `description`, `nullable`, `validator`, `timeout_s`
+(advertised in `keys.describe`; the CLI uses it to extend the modify timeout
+for slow operations like motion).
 
 Each `Libby` peer carries a `keyword_registry` with typed builder methods.
 Build keywords by calling `lib.keyword_registry.<type>(...)`, then flush them
@@ -36,6 +36,31 @@ libby.register_keywords(libby.keyword_registry.drain())
 You can also build keywords directly via `BoolKeyword(...)` /
 `FloatKeyword(...)` etc. and pass a list to `register_keywords`. The registry
 is a convenience layer over the same type classes.
+
+## Dict keywords
+
+A `DictKeyword` carries a JSON object (a `dict` with string keys), for a
+request that needs more than one value at once, such as a move with a target
+and a speed. Its fields are not type-checked yet; enforce their shape with a
+`validator`, which runs before the setter:
+
+```python
+def check_move(v):
+    missing = {"x", "y"} - v.keys()
+    return f"missing fields: {sorted(missing)}" if missing else None
+
+libby.keyword_registry.dict("move", setter=stage.move_to,
+                            validator=check_move, timeout_s=30.0)
+```
+
+```python
+client.rpc("my-peer", "move", {"value": {"x": 1.5, "y": 2.0, "speed": 5}})
+```
+
+The setter receives a shallow copy of the sent object. The keygrabber skips
+dict values: neither sink has a single field to store one in.
+
+## Calling keywords
 
 Clients call the keyword by name:
 

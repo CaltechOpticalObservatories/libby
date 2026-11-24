@@ -10,11 +10,11 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Deque, Optional, Protocol, Sequence, Tuple, Union
+from typing import Any, Callable, Deque, Dict, Optional, Protocol, Sequence, Tuple, Union
 
 from ..errors import LibbyError
 
-Value = Union[bool, int, float, str, None]
+Value = Union[bool, int, float, str, Dict[str, Any], None]
 
 DEFAULT_MAX_BATCHES = 64
 DEFAULT_BASE_BACKOFF_S = 1.0

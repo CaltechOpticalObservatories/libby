@@ -161,6 +161,16 @@ class LiteralCoercionTests(unittest.TestCase):
         self.assertEqual(self._operand("'$notakeyword'"), "$notakeyword")
 
 
+    def test_a_json_object_literal_becomes_a_dict(self):
+        self.assertEqual(
+            parse_comparison('$hsfei.stage.target == {"x": 1, "y": 2}'),
+            Comparison("hsfei.stage.target", "==", {"x": 1, "y": 2}),
+        )
+
+    def test_a_malformed_json_object_literal_is_an_expression_error(self):
+        with self.assertRaisesRegex(ExpressionError, "not valid JSON"):
+            parse_comparison("$hsfei.stage.target == {x: 1}")
+
 class EvaluateTests(unittest.TestCase):
     def _eval(self, expression, value, **kwargs):
         return parse_comparison(expression).evaluate(value, **kwargs)

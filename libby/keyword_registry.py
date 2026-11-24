@@ -5,6 +5,7 @@ from typing import Any, Callable, Iterable, List, Optional
 
 from .keyword import (
     BoolKeyword,
+    DictKeyword,
     FloatKeyword,
     IntKeyword,
     Keyword,
@@ -17,7 +18,7 @@ class KeywordRegistry:
     """Collects Keyword instances built via typed methods.
 
     Build keywords with ``bool`` / ``int`` / ``float`` / ``string`` /
-    ``trigger``; each call appends to an internal buffer. Call
+    ``dict`` / ``trigger``; each call appends to an internal buffer. Call
     ``drain()`` to retrieve and clear the buffer; pass the result to
     ``Libby.register_keywords``.
     """
@@ -97,6 +98,24 @@ class KeywordRegistry:
         timeout_s: Optional[float] = None,
     ) -> StringKeyword:
         return self._add(StringKeyword(
+            name,
+            getter=getter, setter=setter,
+            description=description, nullable=nullable, validator=validator,
+            timeout_s=timeout_s,
+        ))
+
+    def dict(
+        self,
+        name: str,
+        *,
+        getter: Optional[Callable[[], Any]] = None,
+        setter: Optional[Callable[[Any], None]] = None,
+        description: str = "",
+        nullable: bool = False,
+        validator: Optional[Callable[[Any], Optional[str]]] = None,
+        timeout_s: Optional[float] = None,
+    ) -> DictKeyword:
+        return self._add(DictKeyword(
             name,
             getter=getter, setter=setter,
             description=description, nullable=nullable, validator=validator,
