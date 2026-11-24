@@ -374,6 +374,7 @@ __all__ = [
     "StringKeyword",
     "DictKeyword",
     "Field",
+    "FieldSpec",
     "FIELD_TYPES",
     "TriggerKeyword",
     "match_pattern",
