@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Iterable, List, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Union
 
 Getter = Callable[[], Any]
 Setter = Callable[[Any], None]
@@ -16,6 +17,96 @@ def match_pattern(pattern: str, names: Iterable[str]) -> List[str]:
     parts = pattern.split("%")
     rx = re.compile("^" + "[^.]*".join(re.escape(p) for p in parts) + "$")
     return sorted(n for n in names if rx.match(n))
+
+
+FIELD_TYPES = ("bool", "int", "float", "string", "any")
+"""The type names a :class:`Field` accepts."""
+
+
+@dataclass(frozen=True)
+class Field:
+    """One field of a :class:`DictKeyword` schema.
+
+    ``type`` is one of :data:`FIELD_TYPES`; ``"any"`` accepts any JSON value
+    unchecked. A field that is not ``required`` may be left out, and is then
+    absent from the dict the setter receives rather than filled with ``None``.
+    """
+
+    type: str
+    units: Optional[str] = None
+    description: str = ""
+    required: bool = True
+    nullable: bool = False
+
+    def __post_init__(self) -> None:
+        if self.type not in FIELD_TYPES:
+            raise ValueError(
+                f"unknown field type {self.type!r}; "
+                f"expected one of: {', '.join(FIELD_TYPES)}"
+            )
+
+    def check(self, v: Any) -> Any:
+        """Type-check or cast one field value; raise TypeError if it does not fit.
+
+        Mirrors the scalar keyword types' ``_type_check``, messages included.
+        """
+        if v is None:
+            if self.nullable:
+                return None
+            raise TypeError("value must not be null")
+        if self.type == "bool":
+            if not isinstance(v, bool):
+                raise TypeError("value must be a bool")
+        elif self.type == "int":
+            # bool is a subclass of int in Python; reject explicitly
+            if isinstance(v, bool) or not isinstance(v, int):
+                raise TypeError("value must be an int")
+        elif self.type == "float":
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                raise TypeError("value must be a number")
+            return float(v)
+        elif self.type == "string":
+            if not isinstance(v, str):
+                raise TypeError("value must be a string")
+        return v
+
+    def describe(self) -> Dict[str, Any]:
+        out: Dict[str, Any] = {
+            "type": self.type,
+            "required": self.required,
+            "nullable": self.nullable,
+        }
+        if self.units is not None:
+            out["units"] = self.units
+        if self.description:
+            out["description"] = self.description
+        return out
+
+
+FieldSpec = Union[str, Field]
+
+
+def _quoted(names: Iterable[str]) -> str:
+    return ", ".join(f"'{n}'" for n in names)
+
+
+def _normalize_fields(keyword: str, fields: Mapping[str, FieldSpec]) -> Dict[str, Field]:
+    """Turn a ``fields`` argument into name → Field, failing at construction."""
+    out: Dict[str, Field] = {}
+    for name, spec in fields.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError(f"keyword '{keyword}': field names must be non-empty strings")
+        if isinstance(spec, str):
+            try:
+                spec = Field(spec)
+            except ValueError as e:
+                raise ValueError(f"keyword '{keyword}': field '{name}': {e}") from e
+        elif not isinstance(spec, Field):
+            raise TypeError(
+                f"keyword '{keyword}': field '{name}' must be a type name or a Field"
+            )
+        out[name] = spec
+    return out
 
 
 class Keyword:
@@ -167,18 +258,71 @@ class StringKeyword(Keyword):
 class DictKeyword(Keyword):
     """Keyword whose value is a JSON object: a ``dict`` with ``str`` keys.
 
-    Field values are not type-checked; constrain them with ``validator``. The
-    setter receives a shallow copy, never the caller's payload object.
+    Without ``fields`` any such dict is accepted. With ``fields``, a mapping of
+    field name to a type name (see :data:`FIELD_TYPES`) or a :class:`Field`,
+    a modify must name only known fields, include every required one, and give
+    each a value of its type; ``float`` fields cast ints as
+    :class:`FloatKeyword` does. ``validator`` runs after these checks, for
+    rules spanning fields. The setter receives a new dict, never the caller's
+    payload object. ``describe()`` advertises the schema under ``fields``.
     """
 
     type_name = "dict"
 
-    def _type_check(self, v: Any) -> dict[str, Any]:
+    def __init__(
+        self,
+        name: str,
+        *,
+        getter: Optional[Getter] = None,
+        setter: Optional[Setter] = None,
+        fields: Optional[Mapping[str, FieldSpec]] = None,
+        units: Optional[str] = None,
+        description: str = "",
+        nullable: bool = False,
+        validator: Optional[Validator] = None,
+        timeout_s: Optional[float] = None,
+    ) -> None:
+        super().__init__(
+            name,
+            getter=getter, setter=setter, units=units, description=description,
+            nullable=nullable, validator=validator, timeout_s=timeout_s,
+        )
+        self.fields: Optional[Dict[str, Field]] = (
+            None if fields is None else _normalize_fields(name, fields)
+        )
+
+    def _type_check(self, v: Any) -> Dict[str, Any]:
         if not isinstance(v, dict):
             raise TypeError("value must be a dict")
         if not all(isinstance(k, str) for k in v):
             raise TypeError("dict keys must be strings")
-        return dict(v)
+        if self.fields is None:
+            return dict(v)
+
+        unknown = [k for k in v if k not in self.fields]
+        if unknown:
+            noun = "field" if len(unknown) == 1 else "fields"
+            raise ValueError(
+                f"unknown {noun} {_quoted(unknown)}; expected {_quoted(self.fields)}"
+            )
+        missing = [k for k, f in self.fields.items() if f.required and k not in v]
+        if missing:
+            noun = "field" if len(missing) == 1 else "fields"
+            raise ValueError(f"missing required {noun} {_quoted(missing)}")
+
+        out: Dict[str, Any] = {}
+        for key, raw in v.items():
+            try:
+                out[key] = self.fields[key].check(raw)
+            except (TypeError, ValueError) as e:
+                raise TypeError(f"field '{key}': {e}") from e
+        return out
+
+    def describe(self) -> dict:
+        out = super().describe()
+        if self.fields is not None:
+            out["fields"] = {n: f.describe() for n, f in self.fields.items()}
+        return out
 
 
 class TriggerKeyword(Keyword):
@@ -229,6 +373,8 @@ __all__ = [
     "FloatKeyword",
     "StringKeyword",
     "DictKeyword",
+    "Field",
+    "FIELD_TYPES",
     "TriggerKeyword",
     "match_pattern",
 ]

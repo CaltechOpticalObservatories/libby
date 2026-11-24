@@ -1,11 +1,12 @@
 """Per-Libby buffer for building Keyword instances with a typed-method API."""
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, List, Optional
+from typing import Any, Callable, Iterable, List, Mapping, Optional
 
 from .keyword import (
     BoolKeyword,
     DictKeyword,
+    FieldSpec,
     FloatKeyword,
     IntKeyword,
     Keyword,
@@ -110,6 +111,7 @@ class KeywordRegistry:
         *,
         getter: Optional[Callable[[], Any]] = None,
         setter: Optional[Callable[[Any], None]] = None,
+        fields: Optional[Mapping[str, FieldSpec]] = None,
         description: str = "",
         nullable: bool = False,
         validator: Optional[Callable[[Any], Optional[str]]] = None,
@@ -117,7 +119,7 @@ class KeywordRegistry:
     ) -> DictKeyword:
         return self._add(DictKeyword(
             name,
-            getter=getter, setter=setter,
+            getter=getter, setter=setter, fields=fields,
             description=description, nullable=nullable, validator=validator,
             timeout_s=timeout_s,
         ))

@@ -274,12 +274,33 @@ def _emit_describe(qualified: str, resp: Dict[str, Any], *, as_json: bool) -> in
     ]
     visible = [(k, v) for k, v in fields if v is not None and v != ""]
     print(f"{qualified}:")
-    if not visible:
-        return 0
-    width = max(len(k) for k, _ in visible)
-    for key, value in visible:
-        print(f"  {key:<{width}}  {value}")
+    if visible:
+        width = max(len(k) for k, _ in visible)
+        for key, value in visible:
+            print(f"  {key:<{width}}  {value}")
+    schema = resp.get("fields")
+    if isinstance(schema, dict) and schema:
+        print("  fields:")
+        for line in _fmt_schema(schema):
+            print(f"    {line}")
     return 0
+
+
+def _fmt_schema(schema: Dict[str, Any]) -> List[str]:
+    """Lay out a dict keyword's ``fields`` as aligned columns: name, type,
+    required/optional (and nullable), units, description."""
+    rows = []
+    for name, spec in schema.items():
+        spec = spec if isinstance(spec, dict) else {}
+        need = "required" if spec.get("required", True) else "optional"
+        if spec.get("nullable"):
+            need += ", nullable"
+        rows.append([str(name), str(spec.get("type", "?")), need,
+                     str(spec.get("units") or ""), str(spec.get("description") or "")])
+    # Drop a column no field fills (often units or description), then align
+    columns = [i for i in range(len(rows[0])) if any(row[i] for row in rows)]
+    widths = {i: max(len(row[i]) for row in rows) for i in columns}
+    return ["  ".join(row[i].ljust(widths[i]) for i in columns).rstrip() for row in rows]
 
 
 def _fmt_elapsed(seconds: float) -> str:

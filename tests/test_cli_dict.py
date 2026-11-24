@@ -8,6 +8,7 @@ from contextlib import redirect_stderr, redirect_stdout
 from typing import Any, Dict, List, Tuple
 from unittest import mock
 
+from libby import DictKeyword, Field
 from libby.cli import libby_cli
 
 
@@ -23,6 +24,9 @@ class _EchoLibby:
         """Record the request; echo a modify, show a stored value."""
         # pylint: disable=unused-argument
         self.sent.append((key, payload))
+        if key == "keys.describe":
+            return {"status": "delivered",
+                    "resp": {"ok": True, **self._values[payload["name"]].describe()}}
         if "value" in payload:
             return {"status": "delivered", "resp": {"ok": True, "value": payload["value"]}}
         return {"status": "delivered", "resp": {"ok": True, "value": self._values[key]}}
@@ -79,6 +83,51 @@ class ShowDictTests(unittest.TestCase):
         _, out, _ = _run(["show", "hsfei.stage.target", "--json"],
                          _EchoLibby({"target": {"x": 1.0}}))
         self.assertEqual(json.loads(out)["value"], {"x": 1.0})
+
+
+class DescribeDictTests(unittest.TestCase):
+    """``libby describe`` lays a dict keyword's schema out as a table."""
+
+    def _keyword(self) -> DictKeyword:
+        return DictKeyword("move", setter=lambda v: None, description="Move the stage", fields={
+            "x": Field("float", units="mm"),
+            "y": Field("float", units="mm"),
+            "speed": Field("float", units="mm/s", required=False, description="Slew rate"),
+            "note": Field("string", required=False, nullable=True),
+        })
+
+    def test_text_output_lists_the_fields(self):
+        rc, out, _ = _run(["describe", "hsfei.stage.move"],
+                          _EchoLibby({"move": self._keyword()}))
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.splitlines()[-5:], [
+            "  fields:",
+            "    x      float   required            mm",
+            "    y      float   required            mm",
+            "    speed  float   optional            mm/s  Slew rate",
+            "    note   string  optional, nullable",
+        ])
+
+    def test_unused_columns_are_dropped(self):
+        keyword = DictKeyword("pos", getter=dict, fields={"x": "float", "label": "string"})
+        _, out, _ = _run(["describe", "hsfei.stage.pos"], _EchoLibby({"pos": keyword}))
+        self.assertEqual(out.splitlines()[-3:], [
+            "  fields:",
+            "    x      float   required",
+            "    label  string  required",
+        ])
+
+    def test_no_schema_prints_no_fields_section(self):
+        keyword = DictKeyword("raw", setter=lambda v: None)
+        _, out, _ = _run(["describe", "hsfei.stage.raw"], _EchoLibby({"raw": keyword}))
+        self.assertNotIn("fields", out)
+
+    def test_json_output_carries_the_schema(self):
+        _, out, _ = _run(["describe", "hsfei.stage.move", "--json"],
+                         _EchoLibby({"move": self._keyword()}))
+        self.assertEqual(json.loads(out)["fields"]["speed"],
+                         {"type": "float", "required": False, "nullable": False,
+                          "units": "mm/s", "description": "Slew rate"})
 
 
 if __name__ == "__main__":
