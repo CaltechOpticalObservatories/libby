@@ -1,7 +1,8 @@
 """Tests for the keyheader daemon, with a fake source in place of InfluxDB.
 
 The unit cases call the daemon directly. The end-to-end case starts it on ZMQ
-and requests a segment over the wire, as a camera daemon would.
+and requests a segment over the wire by writing its dict keyword, as a camera
+daemon would.
 """
 from __future__ import annotations
 
@@ -15,10 +16,11 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
-from libby import Client
+from libby import Client, LibbyError
 from libby.config import ConfigError
 from libby.keygrabber import Sample
-from libby.keyheader import SERVICE_KEY, KeyheaderDaemon, parse_config, parse_time
+from libby.keyheader import (SEGMENT_KEYWORD, KeyheaderDaemon, RequestKeyword,
+                             parse_config, parse_time)
 from libby.keyheader.source import SourceReadError
 
 T0 = datetime(2026, 11, 11, 8, 15, 0, tzinfo=timezone.utc)
@@ -137,17 +139,73 @@ class SegmentTests(unittest.TestCase):
         # pylint: disable-next=protected-access
         reply = self.daemon._serve({"segment": "EXP-BEGIN",
                                     "time": "2026-11-11T08:15:00Z"})
-        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["segment"], "EXP-BEGIN")
         self.assertEqual(reply["time"], "2026-11-11T08:15:00.000")
         self.assertEqual(len(reply["cards"]), 5)
 
-    def test_request_needs_segment_and_time(self):
-        """Reject a request missing either field."""
-        # pylint: disable=protected-access
-        with self.assertRaisesRegex(ValueError, "segment"):
-            self.daemon._serve({"time": "2026-11-11T08:15:00Z"})
-        with self.assertRaisesRegex(ValueError, "time"):
-            self.daemon._serve({"segment": "EXP-BEGIN"})
+    def test_request_schema(self):
+        """Reject a request with a missing, unknown or mistyped field."""
+        keyword = self.daemon._segment_keyword()  # pylint: disable=protected-access
+        cases = [
+            ({"time": "2026-11-11T08:15:00Z"}, "missing required field 'segment'"),
+            ({"segment": "EXP-BEGIN"}, "missing required field 'time'"),
+            ({"segment": "EXP-BEGIN", "time": "2026-11-11", "exp": 1},
+             "unknown field 'exp'"),
+            ({"segment": "EXP-BEGIN", "time": 1731312900}, "field 'time'"),
+            ({"segment": "EXP-BEGIN", "time": "yesterday"}, "ISO 8601"),
+        ]
+        for request, error in cases:
+            with self.subTest(request=request):
+                reply = keyword.handle({"value": request})
+                self.assertFalse(reply["ok"])
+                self.assertIn(error, reply["error"])
+        self.assertEqual(self.daemon.counters.requests, 0)
+
+    def test_describes_schema(self):
+        """Advertise the request's fields, so `libby describe` shows them."""
+        described = self.daemon._segment_keyword().describe()  # pylint: disable=protected-access
+        self.assertEqual(set(described["fields"]), {"segment", "time"})
+        self.assertTrue(described["writeonly"])
+
+
+class RequestKeywordTests(unittest.TestCase):
+    """The request keyword replies with its handler's result."""
+
+    def setUp(self):
+        self.keyword = RequestKeyword("ask", lambda request: {"got": request["x"]})
+        self.typed = RequestKeyword("typed", lambda request: request["x"] * 2,
+                                    fields={"x": "float"})
+
+    def test_reply_is_handler_result(self):
+        """Answer with the result, not an echo of the request."""
+        self.assertEqual(self.keyword.handle({"value": {"x": 1}}),
+                         {"ok": True, "value": {"got": 1}})
+
+    def test_rejects_non_dict(self):
+        """Type-check the request before calling the handler."""
+        for raw in ("EXP-BEGIN", None, [1]):
+            with self.subTest(raw=raw):
+                self.assertFalse(self.keyword.handle({"value": raw})["ok"])
+
+    def test_handler_error_is_reply(self):
+        """Report a handler failure as an error reply."""
+        reply = self.keyword.handle({"value": {}})
+        self.assertFalse(reply["ok"])
+        self.assertIn("x", reply["error"])
+
+    def test_fields_checked_and_cast(self):
+        """Check the schema first, and hand the handler the cast values."""
+        self.assertEqual(self.typed.handle({"value": {"x": 2}}),
+                         {"ok": True, "value": 4.0})
+        reply = self.typed.handle({"value": {"x": "2"}})
+        self.assertFalse(reply["ok"])
+        self.assertIn("field 'x'", reply["error"])
+
+    def test_write_only(self):
+        """Describe as a write-only dict, so the keygrabber skips it."""
+        described = self.keyword.describe()
+        self.assertEqual(described["type"], "dict")
+        self.assertTrue(described["writeonly"])
 
 
 class ParseTimeTests(unittest.TestCase):
@@ -233,29 +291,24 @@ class ZmqEndToEndTests(unittest.TestCase):
         self.daemon.stop()
 
     def test_request_segment(self):
-        """Answer the service with entries, and serve control keywords."""
+        """Answer the keyword with entries, and serve control keywords."""
         peer = "hispec.keyheaderzmq"
+        keyword = f"{peer}.{SEGMENT_KEYWORD}"
         with Client.zmq(bind=_free_endpoint(),
                         address_book={peer: self.endpoint}) as client:
-            # pylint: disable-next=protected-access
-            envelope = client._libby.rpc(
-                peer, SERVICE_KEY,
-                {"segment": "EXP-BEGIN", "time": "2026-11-11T08:15:00Z"},
-                ttl_ms=5000)
-            reply = envelope.get("resp", envelope)
-            self.assertTrue(reply.get("ok"), reply)
+            reply = client.set(keyword, {"segment": "EXP-BEGIN",
+                                         "time": "2026-11-11T08:15:00Z"},
+                               timeout_s=5.0)
             self.assertEqual(reply["cards"][2],
                              {"keyword": "ADCPOS", "value": 1.5,
                               "comment": "ADC position"})
             self.assertEqual(client.get(f"{peer}.segments"), "EXP-BEGIN")
             self.assertEqual(client.get(f"{peer}.requests"), 1)
+            self.assertIn(keyword, client.list(f"{peer}.%"))
 
-            envelope = client._libby.rpc(  # pylint: disable=protected-access
-                peer, SERVICE_KEY, {"segment": "NOPE", "time": "2026-11-11"},
-                ttl_ms=5000)
-            reply = envelope.get("resp", envelope)
-            self.assertFalse(reply.get("ok"))
-            self.assertIn("unknown segment", reply["error"])
+            with self.assertRaisesRegex(LibbyError, "unknown segment"):
+                client.set(keyword, {"segment": "NOPE", "time": "2026-11-11"},
+                           timeout_s=5.0)
 
 
 if __name__ == "__main__":

@@ -164,18 +164,23 @@ keygrabber config may therefore call for a matching change to `window_s` here.
 
 ## Requesting a segment
 
-The service key is `keyheader.segment`:
+A segment is requested by writing the daemon's `segment` keyword, a write-only
+`dict` keyword:
 
 ```python
-reply = libby.rpc("hispec.keyheader", "keyheader.segment",
-                  {"segment": "EXP-BEGIN", "time": "2026-11-11T08:15:02.123Z"})
+reply = client.set("hispec.keyheader.segment",
+                   {"segment": "EXP-BEGIN", "time": "2026-11-11T08:15:02.123Z"})
 ```
 
-`time` is ISO 8601. A time with no offset is taken as UTC. The reply is:
+The keyword's schema has two required string fields, `segment` and `time`,
+and `libby describe hispec.keyheader.segment` lists them. A request with a
+missing, extra or non-string field is rejected before it reaches the source.
+`time` is ISO 8601. A time with no offset is taken as UTC. Unlike an ordinary
+keyword write, the reply's value is the answer rather than an echo of the
+request:
 
 ```json
 {
-  "ok": true,
   "segment": "EXP-BEGIN",
   "time": "2026-11-11T08:15:02.123",
   "cards": [
@@ -187,8 +192,12 @@ reply = libby.rpc("hispec.keyheader", "keyheader.segment",
 }
 ```
 
+A daemon calling over its own `Libby` peer sends the same thing as
+`{"value": {...}}` to the `segment` key, and finds the object above under the
+response's `value`.
+
 An unknown segment or a malformed request comes back as `ok: false` with an
-`error`.
+`error`, which `Client.set` raises as a `LibbyError`.
 
 ### Adding the cards with astropy
 
@@ -243,12 +252,13 @@ The cards in a segment are read in parallel on `workers` threads. A request
 therefore costs about one database round trip, plus queueing when a segment
 has many more cards than workers. The request is handled on the transport's
 receive thread, so it holds up other requests to keyheader for that long.
-Give the RPC a TTL that covers the database's `timeout_ms`.
+Give the request a timeout that covers the database's `timeout_ms`.
 
 ## Control keywords
 
 | Keyword | Type | Access | Meaning |
 |---|---|---|---|
+| `segment` | dict | W | Request a segment's cards; see [Requesting a segment](#requesting-a-segment) |
 | `isconnected` | bool | R | Last source read succeeded |
 | `requests` | int | R | Segment requests answered since start |
 | `readerrors` | int | R | Source reads that failed |
